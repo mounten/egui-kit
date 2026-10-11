@@ -5,6 +5,8 @@ git_release_enable = true
 git_tag_name = "v{{ version }}"
 # Only the library is released.
 release = false
+# Only release when a release PR was merged, not on every push with an unpublished version.
+release_always = false
 semver_check = true
 
 [[package]]
