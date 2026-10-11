@@ -2,16 +2,20 @@
 //! (SvelteKit's `beforeNavigate` + `cancel()`), also for the back button.
 //!
 //! The draft is `PageState`: the user's input, separate from the loaded data, so it survives
-//! the page's reloads (publishing reloads the post count).
+//! the page's reloads.
+//!
+//! Publishing is a `Command` (SvelteKit's remote `command`): it runs in the background while the
+//! view shows that it's pending, and refreshes everything that depends on the posts once done,
+//! including the `PostCount` query shown here and in the top bar.
 
 use egui_kit::Rejection;
-use egui_kit::extract::{Nav, PageState, State};
+use egui_kit::extract::{Nav, PageState, Remote, State};
 
-use crate::state::{Db, POSTS, Session};
+use crate::remote::{PostCount, Publish};
+use crate::state::{AppState, Session};
 
 pub struct Data {
     user: String,
-    post_count: usize,
 }
 
 #[derive(Default)]
@@ -20,11 +24,10 @@ pub struct Draft {
     body: String,
 }
 
-pub async fn load(State(session): State<Session>, State(db): State<Db>) -> Result<Data, Rejection> {
+pub async fn load(State(session): State<Session>) -> Result<Data, Rejection> {
     Ok(Data {
         // The hook guarantees a user.
         user: session.user().unwrap_or_default(),
-        post_count: db.posts().len(),
     })
 }
 
@@ -33,14 +36,21 @@ pub fn view(
     data: &Data,
     mut draft: PageState<'_, Draft>,
     State(session): State<&Session>,
-    State(db): State<&Db>,
+    remote: Remote<'_, AppState>,
     nav: Nav<'_>,
 ) {
     ui.heading("Admin");
-    ui.label(format!(
-        "Welcome, {}! There are {} posts.",
-        data.user, data.post_count
-    ));
+    ui.horizontal(|ui| {
+        ui.label(format!("Welcome, {}!", data.user));
+        let posts = remote.query(PostCount);
+        match posts.current() {
+            Some(count) => ui.label(format!("There are {count} posts.")),
+            None => ui.label("Counting posts…"),
+        };
+        if posts.is_loading() {
+            ui.spinner();
+        }
+    });
     if ui.button("Log out").clicked() {
         session.logout();
         nav.goto("/");
@@ -48,17 +58,34 @@ pub fn view(
 
     ui.separator();
     ui.strong("New post");
-    ui.add(egui::TextEdit::singleline(&mut draft.title).hint_text("Title"));
-    ui.add(egui::TextEdit::multiline(&mut draft.body).hint_text("Write something…"));
-    let can_publish = !draft.title.trim().is_empty();
-    if ui
-        .add_enabled(can_publish, egui::Button::new("Publish"))
-        .clicked()
-    {
-        let slug = db.publish(draft.title.trim(), draft.body.trim(), 1);
+    let publish = remote.command::<Publish>();
+    let pending = publish.is_pending();
+    ui.add_enabled_ui(!pending, |ui| {
+        ui.add(egui::TextEdit::singleline(&mut draft.title).hint_text("Title"));
+        ui.add(egui::TextEdit::multiline(&mut draft.body).hint_text("Write something…"));
+    });
+    ui.horizontal(|ui| {
+        let can_publish = !draft.title.trim().is_empty() && !pending;
+        if ui
+            .add_enabled(can_publish, egui::Button::new("Publish"))
+            .clicked()
+        {
+            publish.run(Publish {
+                title: draft.title.trim().to_owned(),
+                body: draft.body.trim().to_owned(),
+            });
+        }
+        if pending {
+            ui.spinner();
+            ui.weak("Publishing…");
+        }
+    });
+    if let Some(error) = publish.error() {
+        ui.colored_label(ui.visuals().error_fg_color, error.message);
+    }
+    // The command already refreshed what depends on the posts.
+    if let Some(slug) = publish.take_output() {
         *draft = Draft::default();
-        // Reloads every load that depends on the posts: this page's count, the blog sidebar…
-        nav.invalidate(POSTS);
         nav.goto(format!("/blog/{slug}"));
     }
 

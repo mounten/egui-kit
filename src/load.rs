@@ -43,7 +43,7 @@ pub(crate) enum Invalidation {
 }
 
 impl Invalidation {
-    fn hits(&self, keys: &[String]) -> bool {
+    pub(crate) fn hits(&self, keys: &[String]) -> bool {
         match self {
             Self::None => false,
             Self::Keys(invalidated) => keys.iter().any(|key| invalidated.contains(key)),

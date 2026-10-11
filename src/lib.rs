@@ -204,6 +204,7 @@
 //! | [`Parent`](extract::Parent): the data of the layouts above | [`Nav`](extract::Nav): links and navigation |
 //! | [`Request`]: the url and parameters | [`PageState<T>`](extract::PageState), [`Snapshot<T>`](extract::Snapshot), [`PersistentState<T>`](extract::PersistentState): [view state](#view-state) |
 //! | | [`Scroll`](extract::Scroll), [`HistoryState<&T>`](extract::HistoryState), [`Navigation`], [`Request`] |
+//! | | [`Remote<S>`](extract::Remote): [queries and commands](#queries-and-commands) |
 //!
 //! # Errors and redirects
 //!
@@ -245,6 +246,15 @@
 //!     .error(error_page)
 //!     .page("/", Page::new(view));
 //! ```
+//!
+//! # Queries and commands
+//!
+//! Not all data belongs to a route: a badge in a layout, an autocomplete. And mutations are often
+//! async too, which a view can't `await`. Inspired by SvelteKit's remote functions, a
+//! [`Query`](remote::Query) is async data any view can read, cached by value, and a
+//! [`Command`](remote::Command) an async mutation that a view starts and watches. A command
+//! refreshes the loads and queries that depend on what it changed. Views use both through the
+//! [`Remote`](extract::Remote) extractor; see the [`remote`] module.
 //!
 //! # State
 //!
@@ -346,6 +356,7 @@ mod history;
 mod load;
 mod navigation;
 pub mod page;
+pub mod remote;
 mod render;
 mod request;
 mod router;
