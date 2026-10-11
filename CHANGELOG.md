@@ -11,8 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- *(remote)* [**breaking**] add queries and commands ([#6](https://github.com/mounten/egui-kit/pull/6))
-- *(history)* let the browser show hovered links ([#4](https://github.com/mounten/egui-kit/pull/4))
+- *(remote)* [**breaking**] new (async) queries and commands available for page ui methods ([#6](https://github.com/mounten/egui-kit/pull/6))
+- *(history)* showing hovered links in the browser ([#4](https://github.com/mounten/egui-kit/pull/4))
 
 ## [0.1.0](https://github.com/mounten/egui-kit/releases/tag/v0.1.0) - 2026-10-11
 
