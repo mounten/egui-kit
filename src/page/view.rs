@@ -8,6 +8,7 @@ use egui::Ui;
 
 use crate::extract::{FromView, Nav, NavState, PageScroll, ViewStore};
 use crate::navigation::Navigation;
+use crate::remote::RemoteStore;
 use crate::request::Request;
 use crate::transition::TransitionHandle;
 
@@ -23,6 +24,7 @@ pub(crate) struct Frame<'a> {
     /// Whether this is the previous page, drawn while a transition animates it out.
     pub(crate) outgoing: bool,
     pub(crate) nav: &'a RefCell<NavState>,
+    pub(crate) remote: &'a RemoteStore,
 }
 
 /// What a view's extractors are extracted from: the app state, the page and the view's data.

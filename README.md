@@ -11,6 +11,10 @@ Pages have an async `load` and a view that gets the loaded data, both taking typ
 path parameters, the query or the app state. Routers can be nested and have layouts, hooks and
 error pages. On the web, the router uses the browser's history.
 
+> [!WARNING]
+> egui-kit is still unstable. Until 1.0, new minor versions (`0.x` → `0.y`) may contain breaking
+> changes; the [changelog](CHANGELOG.md) lists them.
+
 ## Example
 
 ```rust

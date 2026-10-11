@@ -169,13 +169,16 @@ impl Db {
             .cloned()
     }
 
-    /// Adds a post and returns its slug.
-    pub fn publish(&self, title: &str, body: &str, author_id: u32) -> String {
+    /// Adds a post and returns its slug, or `None` if there is a post with that slug already.
+    pub fn publish(&self, title: &str, body: &str, author_id: u32) -> Option<String> {
         let slug: String = title
             .to_lowercase()
             .chars()
             .map(|c| if c.is_alphanumeric() { c } else { '-' })
             .collect();
+        if self.post(&slug).is_some() {
+            return None;
+        }
         self.posts.borrow_mut().push(Post {
             slug: slug.clone(),
             title: title.into(),
@@ -183,7 +186,7 @@ impl Db {
             tags: vec!["new".into()],
             body: body.into(),
         });
-        slug
+        Some(slug)
     }
 
     pub fn photos(&self) -> &[Photo] {

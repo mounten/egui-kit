@@ -32,6 +32,7 @@
 //! | [`HistoryState<&T>`](HistoryState) | the shallow-routing state of the current history entry |
 //! | [`Navigation`] | how the page was reached: from where, how, in which history direction |
 //! | [`Request`] | the url the page was loaded with, and its route's parameters |
+//! | [`Remote<S>`](Remote) | [queries and commands](crate::remote): data and mutations outside of `load`s |
 //!
 //! Layout views also get the [`Outlet`](crate::page::Outlet) as their second argument; it is not an
 //! extractor, every layout has exactly one.
@@ -72,6 +73,7 @@ mod view_state;
 use crate::error::Rejection;
 use crate::navigation::Navigation;
 use crate::page::ViewContext;
+pub use crate::remote::Remote;
 use crate::request::Request;
 pub use history_state::HistoryState;
 pub use nav::Nav;

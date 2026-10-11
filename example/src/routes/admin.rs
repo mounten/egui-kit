@@ -6,10 +6,10 @@ use egui_kit::Router;
 use egui_kit::page::Page;
 
 use crate::hooks;
-use crate::state::{AppState, POSTS};
+use crate::state::AppState;
 
 pub fn router() -> Router<AppState> {
     Router::new()
         .hook(hooks::require_login)
-        .page("/", Page::with_load(page::load, page::view).depends(POSTS))
+        .page("/", Page::with_load(page::load, page::view))
 }

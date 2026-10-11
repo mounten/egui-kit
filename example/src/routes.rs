@@ -18,7 +18,8 @@
 //! │   ├── id/page.rs        [id=int]               /authors/1
 //! │   └── name/page.rs      [name]                 /authors/ferris
 //! ├── gallery/              shallow routing, scroll restoration
-//! └── admin/                guarded by a hook; blocks navigation with unsaved drafts
+//! └── admin/                guarded by a hook; blocks navigation with unsaved drafts;
+//!                           publishes with a command (see `remote.rs`)
 //! ```
 //!
 //! Every `page.rs` has a `load` (the `+page.ts`) and a `view` (the `+page.svelte`).

@@ -4,6 +4,7 @@
 //! Web:     `cd example && trunk serve` (the url bar and browser back/forward follow the router)
 
 mod hooks;
+mod remote;
 mod routes;
 mod state;
 mod util;

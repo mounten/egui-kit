@@ -4,9 +4,10 @@
 //! (what the SvelteKit blog post achieves with `view-transition-name: header`).
 
 use egui::{Align, Button, Panel, RichText};
-use egui_kit::extract::{Nav, PersistentState, State};
+use egui_kit::extract::{Nav, PersistentState, Remote, State};
 use egui_kit::page::Outlet;
 
+use crate::remote::PostCount;
 use crate::state::{AppState, TransitionStyle};
 
 pub fn view(
@@ -14,6 +15,7 @@ pub fn view(
     outlet: Outlet<'_>,
     State(state): State<&AppState>,
     mut style: PersistentState<'_, TransitionStyle>,
+    remote: Remote<'_, AppState>,
     nav: Nav<'_>,
 ) {
     Panel::top("top_bar").show(ui, |ui| {
@@ -53,6 +55,10 @@ pub fn view(
             ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
                 let navigations = state.navigations.get();
                 ui.weak(format!("{navigations} navigations"));
+                // A query: the top bar fetches it itself, it's not part of any route's `load`.
+                if let Some(count) = remote.query(PostCount).current() {
+                    ui.weak(format!("{count} posts ·"));
+                }
 
                 egui::ComboBox::from_id_salt("transition")
                     .selected_text(format!("{:?}", *style))
