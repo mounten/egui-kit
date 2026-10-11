@@ -1,0 +1,177 @@
+[package]
+name = "egui-kit"
+version = "0.1.0"
+edition = "2024"
+description = "A SvelteKit-inspired router for egui with typed loaders, layouts, hooks, error pages and browser history."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/mounten/egui-kit"
+documentation = "https://docs.rs/egui-kit"
+readme = "README.md"
+include = ["/src", "/tests", "/README.md", "/CHANGELOG.md", "/LICENSE-APACHE", "/LICENSE-MIT"]
+keywords = ["egui", "router", "gui", "wasm"]
+categories = ["gui", "wasm"]
+
+[workspace]
+members = ["example"]
+
+[dependencies]
+egui = { version = "0.36", default-features = false }
+percent-encoding = "2.3"
+serde = "1.0"
+serde_urlencoded = "0.7"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+js-sys = "0.3"
+wasm-bindgen = "0.2"
+web-sys = { version = "0.3", features = ["Window", "Location", "History", "PopStateEvent", "EventTarget", "MediaQueryList"] }
+
+[dev-dependencies]
+egui = "0.36"
+serde = { version = "1.0", features = ["derive"] }
+
+[lints]
+workspace = true
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+
+future_incompatible = { level = "warn", priority = -1 }
+nonstandard_style = { level = "warn", priority = -1 }
+rust_2018_idioms = { level = "warn", priority = -1 }
+trivial_numeric_casts = "warn"
+unused_import_braces = "warn"
+unused_lifetimes = "warn"
+
+trivial_casts = "allow"
+unused_qualifications = "allow"
+
+# `web_sys_unstable_apis` changes some signatures, so we need to check for presence of that flag. This whitelists
+# checking `cfg(web_sys_unstable_apis)` (which the unexpected_cfgs would otherwise deny):
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(web_sys_unstable_apis)'] }
+
+[workspace.lints.rustdoc]
+all = "warn"
+
+[workspace.lints.clippy]
+# `all` = `correctness` + `suspicious` + `style` + `complexity` + `perf`.
+# The remaining groups are `nursery` and `restriction`,
+# which are not meant to be enabled wholesale - we cherry-pick from them below.
+all = { level = "warn", priority = -1 }
+cargo = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+
+allow_attributes = "warn"
+as_ptr_cast_mut = "warn"
+branches_sharing_code = "warn"
+clear_with_drain = "warn"
+clone_on_ref_ptr = "warn"
+coerce_container_to_any = "warn"
+dbg_macro = "warn"
+debug_assert_with_mut_call = "warn"
+default_union_representation = "warn"
+derive_partial_eq_without_eq = "warn"
+disallowed_script_idents = "warn" # See clippy.toml
+doc_include_without_cfg = "warn"
+empty_enum_variants_with_brackets = "warn"
+equatable_if_let = "warn"
+exit = "warn"
+fallible_impl_from = "warn"
+float_cmp_const = "warn"
+fn_to_numeric_cast_any = "warn"
+get_unwrap = "warn"
+imprecise_flops = "warn"
+infinite_loop = "warn"
+iter_on_empty_collections = "warn"
+iter_on_single_items = "warn"
+iter_over_hash_type = "warn"
+large_include_file = "warn"
+large_stack_frames = "warn"
+literal_string_with_formatting_args = "warn"
+lossy_float_literal = "warn"
+map_err_ignore = "warn"
+mem_forget = "warn"
+missing_assert_message = "warn"
+mutex_integer = "warn"
+needless_pass_by_ref_mut = "warn"
+needless_type_cast = "warn"
+non_zero_suggestions = "warn"
+nonstandard_macro_braces = "warn"
+or_fun_call = "warn"
+path_buf_push_overwrite = "warn"
+pathbuf_init_then_push = "warn"
+precedence_bits = "warn"
+print_stderr = "warn"
+print_stdout = "warn"
+pub_without_shorthand = "warn"
+rc_mutex = "warn"
+redundant_type_annotations = "warn"
+ref_patterns = "warn"
+rest_pat_in_fully_bound_structs = "warn"
+return_and_then = "warn"
+set_contains_or_insert = "warn"
+single_option_map = "warn"
+std_instead_of_core = "warn"
+str_to_string = "warn"
+string_add = "warn"
+string_lit_as_bytes = "warn"
+string_lit_chars_any = "warn"
+suspicious_xor_used_as_pow = "warn"
+todo = "warn"
+too_long_first_doc_paragraph = "warn"
+trailing_empty_array = "warn"
+trait_duplication_in_bounds = "warn"
+tuple_array_conversions = "warn"
+undocumented_unsafe_blocks = "warn"
+unimplemented = "warn"
+uninhabited_references = "warn"
+unnecessary_safety_comment = "warn"
+unnecessary_safety_doc = "warn"
+unnecessary_self_imports = "warn"
+unnecessary_struct_initialization = "warn"
+unused_peekable = "warn"
+unused_rounding = "warn"
+unused_trait_names = "warn"
+unwrap_used = "warn"
+use_self = "warn"
+useless_let_if_seq = "warn"
+verbose_file_reads = "warn"
+
+
+# Pedantic lints we opt out of, with the number of hits at the time we enabled `pedantic`:
+cast_lossless = "allow" # 204 hits
+cast_possible_truncation = "allow" # 287 hits
+cast_possible_wrap = "allow" # 43 hits
+cast_precision_loss = "allow" # 200 hits
+cast_sign_loss = "allow" # 98 hits
+comparison_chain = "allow"
+default_trait_access = "allow" # 278 hits
+float_cmp = "allow" # exact float comparisons are usually intentional (`float_cmp_const` is still on)
+inline_always = "allow" # 271 hits; we know what we are doing
+items_after_statements = "allow" # 82 hits
+many_single_char_names = "allow" # `r, g, b, a` and `h, s, v` are fine
+missing_panics_doc = "allow" # 68 hits
+must_use_candidate = "allow" # 1169 hits
+redundant_closure_for_method_calls = "allow" # 89 hits
+return_self_not_must_use = "allow" # 246 hits
+should_panic_without_expect = "allow"
+similar_names = "allow" # too many false positives, e.g. `encoder`/`encoded`
+struct_excessive_bools = "allow" # 32 hits
+struct_field_names = "allow" # 23 hits
+too_many_lines = "allow"
+trivially_copy_pass_by_ref = "allow" # 119 hits
+unreadable_literal = "allow" # 513 hits
+used_underscore_binding = "allow" # 25 hits
+
+# Other:
+assigning_clones = "allow" # No please
+manual_range_contains = "allow" # this one is just worse imho
+map_unwrap_or = "allow" # so is this one
+multiple_crate_versions = "allow" # we handle this with `cargo deny`
+wildcard_imports = "allow" # `use crate::*` is useful to avoid merge conflicts when adding/removing imports
+
+# NOTE: these are in `restriction`/`nursery`, so the `allow` is a no-op today.
+# We keep them to record our intent in case we ever enable those groups.
+let_underscore_must_use = "allow"
+let_underscore_untyped = "allow"
+self_named_module_files = "allow" # Disabled waiting on https://github.com/rust-lang/rust-clippy/issues/9602
+significant_drop_tightening = "allow" # Too many false positives

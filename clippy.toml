@@ -1,0 +1,3 @@
+# SvelteKit is a proper noun, not code, so it should not need backticks in docs.
+doc-valid-idents = ["SvelteKit", ".."]
+allow-unwrap-in-tests = true
