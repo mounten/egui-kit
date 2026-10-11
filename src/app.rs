@@ -183,6 +183,7 @@ impl<S: Clone + 'static> RouterApp<S> {
         }
         self.poll(&ctx);
 
+        self.nav.shows_links = self.history.shows_links();
         self.nav.can_go_back = self.history.can_go_back();
         self.nav.can_go_forward = self.history.can_go_forward();
         self.nav.blocked = self
@@ -200,6 +201,11 @@ impl<S: Clone + 'static> RouterApp<S> {
         }
         self.nav = nav.into_inner();
         self.blocking = core::mem::take(&mut self.nav.blocking);
+        let hovered_link = self.nav.hovered_link.take();
+        // Changing the link mid-click or mid-drag would disturb it.
+        if !ctx.input(|i| i.pointer.any_down()) {
+            self.history.hover_link(hovered_link.as_deref());
+        }
         if let Some(transition) = &self.transition
             && (transition.state.done.get() || !transition.state.claimed.get())
         {

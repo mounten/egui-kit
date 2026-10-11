@@ -61,6 +61,15 @@ pub struct BrowserHistory {
     mode: HistoryMode,
     shared: Rc<RefCell<Shared>>,
     listener: Closure<dyn FnMut(web_sys::PopStateEvent)>,
+    link_preview: Option<LinkPreview>,
+}
+
+/// An `<a>` around the canvas whose `href` is the hovered link, so the browser shows it.
+struct LinkPreview {
+    anchor: web_sys::Element,
+    canvas: web_sys::HtmlElement,
+    hovered: Option<String>,
+    on_click: Closure<dyn FnMut(web_sys::MouseEvent)>,
 }
 
 impl BrowserHistory {
@@ -114,7 +123,52 @@ impl BrowserHistory {
             mode,
             shared,
             listener,
+            link_preview: None,
         }
+    }
+
+    /// Lets the browser show hovered [links](crate::extract::Nav::link) like real ones: their url
+    /// in the status bar, and Ctrl/Cmd/Shift/middle-click opening them in a new tab or window.
+    ///
+    /// Wraps `canvas` (the one given to eframe) in an `<a>`, or reuses its parent if that is one.
+    /// Call it before starting eframe.
+    pub fn link_preview(mut self, canvas: &web_sys::HtmlElement) -> Self {
+        let anchor = match canvas.parent_element() {
+            Some(parent) if parent.tag_name().eq_ignore_ascii_case("a") => parent,
+            parent => {
+                let anchor = document()
+                    .create_element("a")
+                    .expect("failed to create <a>");
+                let _ = anchor.set_attribute("style", "display: contents");
+                if let Some(parent) = parent {
+                    let _ = parent.insert_before(&anchor, Some(canvas));
+                }
+                let _ = anchor.append_child(canvas);
+                anchor
+            }
+        };
+        // Dragging would otherwise drag the link out of the page instead of reaching egui.
+        let _ = anchor.set_attribute("draggable", "false");
+        let _ = anchor.remove_attribute("href");
+
+        // The router follows plain clicks itself; the browser must not load the page.
+        // On the canvas, as the `<a>` gets replaced.
+        let on_click = Closure::<dyn FnMut(_)>::new(|event: web_sys::MouseEvent| {
+            if !(event.ctrl_key() || event.meta_key() || event.shift_key()) {
+                event.prevent_default();
+            }
+        });
+        canvas
+            .add_event_listener_with_callback("click", on_click.as_ref().unchecked_ref())
+            .expect("failed to listen to click");
+
+        self.link_preview = Some(LinkPreview {
+            anchor,
+            canvas: canvas.clone(),
+            hovered: None,
+            on_click,
+        });
+        self
     }
 
     fn href(&self, url: &str) -> String {
@@ -131,12 +185,49 @@ impl BrowserHistory {
     }
 }
 
+impl LinkPreview {
+    /// Firefox and Safari only update the status bar when the pointer enters or leaves a link,
+    /// not when the `href` under it changes. So the `<a>` is replaced instead: removing the hovered
+    /// one hides its url, and the next pointer move enters the new one.
+    fn set_href(&mut self, href: Option<&str>) {
+        let Ok(anchor) = self.anchor.clone_node() else {
+            return;
+        };
+        let anchor: web_sys::Element = anchor.unchecked_into();
+        let _ = match href {
+            Some(href) => anchor.set_attribute("href", href),
+            None => anchor.remove_attribute("href"),
+        };
+
+        let had_focus = document()
+            .active_element()
+            .is_some_and(|element| element == *self.canvas);
+        let _ = self.anchor.replace_with_with_node_1(&anchor);
+        while let Some(child) = self.anchor.first_child() {
+            let _ = anchor.append_child(&child);
+        }
+        self.anchor = anchor;
+        if had_focus {
+            let options = web_sys::FocusOptions::new();
+            options.set_prevent_scroll(true);
+            let _ = self.canvas.focus_with_options(&options);
+        }
+    }
+}
+
 impl Drop for BrowserHistory {
     fn drop(&mut self) {
         let _ = window().remove_event_listener_with_callback(
             "popstate",
             self.listener.as_ref().unchecked_ref(),
         );
+        if let Some(preview) = &self.link_preview {
+            let _ = preview.canvas.remove_event_listener_with_callback(
+                "click",
+                preview.on_click.as_ref().unchecked_ref(),
+            );
+            let _ = preview.anchor.remove_attribute("href");
+        }
     }
 }
 
@@ -188,6 +279,22 @@ impl History for BrowserHistory {
         }
         shared.popped.take()
     }
+
+    fn shows_links(&self) -> bool {
+        self.link_preview.is_some()
+    }
+
+    fn hover_link(&mut self, url: Option<&str>) {
+        let href = url.map(|url| self.href(url));
+        let Some(preview) = &mut self.link_preview else {
+            return;
+        };
+        if preview.hovered == href {
+            return;
+        }
+        preview.set_href(href.as_deref());
+        preview.hovered = href;
+    }
 }
 
 fn read_location(mode: &HistoryMode) -> String {
@@ -216,6 +323,10 @@ fn read_location(mode: &HistoryMode) -> String {
 
 fn window() -> web_sys::Window {
     web_sys::window().expect("no window")
+}
+
+fn document() -> web_sys::Document {
+    window().document().expect("no document")
 }
 
 fn history() -> web_sys::History {

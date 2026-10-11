@@ -40,7 +40,8 @@
 //!
 //! On the web, the router uses the browser's history, so the address bar and the back/forward
 //! buttons work. Natively, it keeps the history in memory and handles the mouse's back/forward
-//! buttons and Alt+←/→.
+//! buttons and Alt+←/→. With `BrowserHistory::link_preview`, the browser also treats hovered
+//! links like real ones: it shows their url, and opens them in a new tab on Ctrl/Cmd-click.
 //!
 //! # Routing
 //!

@@ -23,7 +23,7 @@ serde_urlencoded = "0.7"
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 js-sys = "0.3"
 wasm-bindgen = "0.2"
-web-sys = { version = "0.3", features = ["Window", "Location", "History", "PopStateEvent", "EventTarget", "MediaQueryList"] }
+web-sys = { version = "0.3", features = ["Document", "Element", "EventTarget", "FocusOptions", "History", "HtmlElement", "Location", "MediaQueryList", "MouseEvent", "Node", "PopStateEvent", "Window"] }
 
 [dev-dependencies]
 egui = "0.36"

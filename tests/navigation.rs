@@ -206,8 +206,8 @@ fn scroll_position_is_restored() {
     app.back();
     assert!((scroll_offset(&frame(&ctx, &mut app)) - scrolled).abs() < 2.0);
 
-    // …and `no_scroll` keeps the position of the page being left.
-    app.goto_with("/long", GotoOptions::default().no_scroll());
+    // …and `no_scroll` keeps the position of the page being left (here: reloaded).
+    app.goto_with("/long", GotoOptions::default().no_scroll().invalidate_all());
     assert!((scroll_offset(&frame(&ctx, &mut app)) - scrolled).abs() < 2.0);
 }
 
