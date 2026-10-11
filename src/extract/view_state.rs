@@ -16,10 +16,6 @@ use crate::page::ViewContext;
 pub(crate) struct TypeMap(RefCell<HashMap<TypeId, Option<Box<dyn Any>>>>);
 
 impl TypeMap {
-    #[expect(
-        clippy::unnecessary_box_returns,
-        reason = "the box is put back as-is, so the value is not reallocated every frame"
-    )]
     fn take<T: Default + 'static>(&self) -> Box<T> {
         let mut map = self.0.borrow_mut();
         let slot = map

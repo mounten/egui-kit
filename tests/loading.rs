@@ -223,7 +223,10 @@ fn invalidate_by_key_and_all() {
     assert_eq!(loads(&ctx, &mut app), ["root", "feed"]);
 
     assert_eq!(act(&ctx, &mut app, |nav| nav.invalidate("feed")), ["feed"]);
-    assert!(act(&ctx, &mut app, |nav| nav.invalidate("unrelated")).is_empty());
+    assert_eq!(
+        act(&ctx, &mut app, |nav| nav.invalidate("unrelated")),
+        Vec::<String>::new()
+    );
     assert_eq!(
         act(&ctx, &mut app, |nav| nav.invalidate_all()),
         ["root", "feed"]
@@ -289,7 +292,7 @@ fn preloaded_routes_are_used_by_the_navigation() {
     );
     app.goto("/search?q=pre");
     let (loaded, rendered) = frame(&ctx, &mut app);
-    assert!(loaded.is_empty());
+    assert_eq!(*loaded, Vec::<String>::new());
     assert_eq!(rendered, ["search:pre"]);
 
     // Preloads are dropped once a navigation finished: they were planned against another page.
