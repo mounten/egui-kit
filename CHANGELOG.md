@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0](https://github.com/mounten/egui-kit/compare/v0.1.0...v0.2.0) - 2026-10-11
+
+### Added
+
+- *(remote)* [**breaking**] add queries and commands ([#6](https://github.com/mounten/egui-kit/pull/6))
+- *(history)* let the browser show hovered links ([#4](https://github.com/mounten/egui-kit/pull/4))
+
 ## [0.1.0](https://github.com/mounten/egui-kit/releases/tag/v0.1.0) - 2026-10-11
 
 ### Added
