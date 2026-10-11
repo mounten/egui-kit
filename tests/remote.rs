@@ -1,7 +1,7 @@
 //! Queries and commands: caching, dropping unread queries, invalidation, and command state.
 
 use core::cell::{Cell, RefCell};
-use core::future::poll_fn;
+use core::future::{Future, poll_fn, ready};
 use core::task::Poll;
 use std::rc::Rc;
 
@@ -10,6 +10,9 @@ use egui_kit::extract::{Nav, Remote, State};
 use egui_kit::page::{Layout, Outlet, Page};
 use egui_kit::remote::{Command, Query};
 use egui_kit::{MemoryHistory, Rejection, RouteError, Router, RouterApp};
+
+/// No runs.
+const NOTHING: [&str; 0] = [];
 
 type Action = Box<dyn FnOnce(Remote<'_, AppState>, Nav<'_>)>;
 
@@ -80,9 +83,9 @@ struct Double(u32);
 impl Query<AppState> for Double {
     type Output = u32;
 
-    async fn run(self, state: AppState) -> Result<u32, RouteError> {
+    fn run(self, state: AppState) -> impl Future<Output = Result<u32, RouteError>> {
         state.ran(format!("double:{}", self.0));
-        Ok(self.0 * 2)
+        ready(Ok(self.0 * 2))
     }
 }
 
@@ -179,7 +182,7 @@ fn queries_are_shared_by_value_and_ready_in_the_same_frame() {
         ["load", "count", "double:1", "double:2"]
     );
     assert_eq!(seen(&app), ["Some(0)"]);
-    assert!(frame(&ctx, &mut app).is_empty());
+    assert_eq!(frame(&ctx, &mut app), NOTHING);
     assert_eq!(seen(&app), ["Some(0)"]);
 }
 
@@ -189,7 +192,7 @@ fn unread_queries_are_dropped() {
     let mut app = app();
     frame(&ctx, &mut app);
     app.state().show.set(false);
-    assert!(frame(&ctx, &mut app).is_empty());
+    assert_eq!(frame(&ctx, &mut app), NOTHING);
     app.state().show.set(true);
     assert_eq!(frame(&ctx, &mut app), ["count", "double:1", "double:2"]);
 }
@@ -208,17 +211,17 @@ fn invalidation_reruns_queries_keeping_the_previous_value() {
     assert_eq!(seen(&app), ["Some(0) loading"]);
 
     app.state().gate.set(true);
-    assert!(frame(&ctx, &mut app).is_empty());
+    assert_eq!(frame(&ctx, &mut app), NOTHING);
     assert_eq!(seen(&app), ["Some(5)"]);
 
     // Other keys leave it alone.
     app.invalidate("other");
-    assert!(frame(&ctx, &mut app).is_empty());
+    assert_eq!(frame(&ctx, &mut app), NOTHING);
 
     // Refreshed in the layout: the page's read later in the frame reruns it.
     act(&app, |remote, _| remote.refresh(&Count));
     assert_eq!(frame(&ctx, &mut app), ["count"]);
-    assert!(frame(&ctx, &mut app).is_empty());
+    assert_eq!(frame(&ctx, &mut app), NOTHING);
 }
 
 #[test]
@@ -238,7 +241,7 @@ fn commands_report_their_state_and_refresh_on_success() {
     act(&app, |remote, _| {
         assert!(remote.command::<Increment>().is_pending());
     });
-    assert!(frame(&ctx, &mut app).is_empty());
+    assert_eq!(frame(&ctx, &mut app), NOTHING);
 
     // Done: it refreshes the page's load and the query.
     app.state().gate.set(true);
@@ -263,7 +266,7 @@ fn commands_report_their_state_and_refresh_on_success() {
         assert_eq!(increment.error(), Some(RouteError::new(409, "nope")));
         assert_eq!(increment.take_output(), None);
     });
-    assert!(frame(&ctx, &mut app).is_empty());
+    assert_eq!(frame(&ctx, &mut app), NOTHING);
 }
 
 #[test]
