@@ -8,7 +8,7 @@ mod routes;
 mod state;
 mod util;
 
-use egui_kit::RouterApp;
+use egui_kit::{History, RouterApp};
 use state::AppState;
 
 struct App {
@@ -16,10 +16,10 @@ struct App {
 }
 
 impl App {
-    fn new() -> Self {
+    fn new(history: impl History + 'static) -> Self {
         Self {
             router: routes::router()
-                .with_state(AppState::new())
+                .with_state_and_history(AppState::new(), history)
                 // SvelteKit's `afterNavigate`: here it just counts.
                 .after_navigate(|_navigation, state: &AppState| {
                     state.navigations.set(state.navigations.get() + 1);
@@ -39,7 +39,7 @@ fn main() -> eframe::Result {
     eframe::run_native(
         "egui-kit example",
         eframe::NativeOptions::default(),
-        Box::new(|_cc| Ok(Box::new(App::new()))),
+        Box::new(|_cc| Ok(Box::new(App::new(egui_kit::default_history())))),
     )
 }
 
@@ -53,12 +53,15 @@ fn main() {
             .and_then(|document| document.get_element_by_id("the_canvas_id"))
             .and_then(|element| element.dyn_into::<web_sys::HtmlCanvasElement>().ok())
             .expect("missing #the_canvas_id canvas");
+        // Hovered links show their url in the browser's status bar, like real ones.
+        let history =
+            egui_kit::BrowserHistory::new(egui_kit::HistoryMode::Path).link_preview(&canvas);
 
         eframe::WebRunner::new()
             .start(
                 canvas,
                 eframe::WebOptions::default(),
-                Box::new(|_cc| Ok(Box::new(App::new()))),
+                Box::new(|_cc| Ok(Box::new(App::new(history)))),
             )
             .await
             .expect("failed to start eframe");

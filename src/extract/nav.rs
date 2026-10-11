@@ -32,6 +32,10 @@ pub(crate) struct NavState {
     pub(crate) can_go_back: bool,
     pub(crate) can_go_forward: bool,
     pub(crate) preload_on_hover: bool,
+    /// Whether the history shows hovered links (and opens modified clicks) itself.
+    pub(crate) shows_links: bool,
+    /// The link under the pointer, set during the frame.
+    pub(crate) hovered_link: Option<String>,
     /// Set by [`Nav::block_navigation`] during the frame.
     pub(crate) blocking: bool,
     pub(crate) blocked: Option<Navigation>,
@@ -123,7 +127,11 @@ impl Nav<'_> {
     /// A hyperlink that navigates within the app. Preloads the target while hovered,
     /// unless [disabled](crate::RouterApp::preload_on_hover).
     pub fn link(&self, ui: &mut Ui, text: impl Into<egui::WidgetText>, href: &str) -> Response {
-        let response = ui.link(text).on_hover_text(href);
+        let mut response = ui.link(text);
+        // The browser shows the url itself.
+        if !self.frame.nav.borrow().shows_links {
+            response = response.on_hover_text(href);
+        }
         self.follow(&response, href);
         response
     }
@@ -136,8 +144,17 @@ impl Nav<'_> {
     }
 
     fn follow(&self, response: &Response, href: &str) {
+        if response.hovered() && !self.frame.outgoing {
+            self.frame.nav.borrow_mut().hovered_link = Some(href.to_owned());
+        }
         if response.clicked() {
-            self.goto(href);
+            // The browser opens Ctrl/Cmd/Shift-clicked links in a new tab or window.
+            let modified = response
+                .ctx
+                .input(|i| i.modifiers.ctrl || i.modifiers.command || i.modifiers.shift);
+            if !(modified && self.frame.nav.borrow().shows_links) {
+                self.goto(href);
+            }
         } else if response.hovered() && self.frame.nav.borrow().preload_on_hover {
             self.preload(href);
         }

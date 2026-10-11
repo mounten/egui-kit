@@ -50,6 +50,16 @@ pub trait History {
     ///
     /// `ctx` can be stored to request a repaint when such a change happens outside a frame.
     fn poll(&mut self, ctx: &egui::Context) -> Option<HistoryEntry>;
+
+    /// Whether [`History::hover_link`] shows hovered links to the platform, which then also
+    /// opens them in a new tab on Ctrl/Cmd/Shift-click (so the router doesn't follow those).
+    fn shows_links(&self) -> bool {
+        false
+    }
+
+    /// Called after every frame with the url of the [link](crate::extract::Nav::link) under the
+    /// pointer, if any.
+    fn hover_link(&mut self, _url: Option<&str>) {}
 }
 
 /// `BrowserHistory` on wasm, [`MemoryHistory`] starting at `/` elsewhere.
