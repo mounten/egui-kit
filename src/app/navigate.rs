@@ -51,6 +51,17 @@ impl<S: Clone + 'static> RouterApp<S> {
             .mounted
             .as_ref()
             .is_some_and(|mounted| mounted.url == to);
+        // Already there: the page keeps its state, and a navigation elsewhere that is still
+        // loading is abandoned. `invalidate_all` asks for a reload, though.
+        if same_url && !options.invalidate_all {
+            if self.pending.as_ref().is_some_and(|pending| {
+                pending.reload_of.is_none() && pending.invalidation == Invalidation::None
+            }) {
+                self.pending = None;
+                self.nav.loading = None;
+            }
+            return;
+        }
         if !same_url && self.should_block() {
             return self.block(
                 Resume::Goto(url.to_owned(), options),
@@ -58,7 +69,7 @@ impl<S: Clone + 'static> RouterApp<S> {
                 Direction::Forward,
             );
         }
-        // Like a browser, following a link to the current url replaces the entry.
+        // Like a browser, reloading the current url replaces the entry.
         let kind = if options.replace_state || same_url {
             NavKind::Replace
         } else {

@@ -6,7 +6,7 @@ use std::rc::Rc;
 use egui::Ui;
 use egui_kit::extract::{Nav, PageState, PersistentState, Snapshot, State};
 use egui_kit::page::{Layout, Outlet, Page};
-use egui_kit::{MemoryHistory, Rejection, Router, RouterApp};
+use egui_kit::{GotoOptions, MemoryHistory, Rejection, Router, RouterApp};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Default)]
@@ -157,6 +157,25 @@ fn page_state_lives_with_the_page_and_snapshots_come_back() {
     frame(&ctx, &mut app);
     app.goto("/form");
     assert_eq!(frame(&ctx, &mut app), ["form#4:page=:snapshot="]);
+}
+
+#[test]
+fn a_link_to_the_current_page_keeps_it() {
+    let ctx = egui::Context::default();
+    let mut app = app("/form");
+    frame(&ctx, &mut app);
+    *app.state().typed.borrow_mut() = Some("x".into());
+    frame(&ctx, &mut app);
+
+    // Going where we already are does nothing...
+    act(&ctx, &mut app, |nav| nav.goto("/form"));
+    assert_eq!(frame(&ctx, &mut app), ["form#1:page=x:snapshot=x"]);
+
+    // ...unless it asks for a reload.
+    act(&ctx, &mut app, |nav| {
+        nav.goto_with("/form", GotoOptions::default().invalidate_all());
+    });
+    assert_eq!(frame(&ctx, &mut app), ["form#2:page=:snapshot="]);
 }
 
 #[test]

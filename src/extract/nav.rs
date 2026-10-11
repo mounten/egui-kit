@@ -94,6 +94,8 @@ impl Nav<'_> {
     /// Navigates to `url`, adding a history entry.
     ///
     /// The current page stays visible until all hooks and `load` handlers of the new route finished.
+    /// Going to the current url does nothing (the page keeps its state), unless
+    /// [`GotoOptions::invalidate_all`] asks for a reload.
     pub fn goto(&self, url: impl Into<String>) {
         self.goto_with(url, GotoOptions::default());
     }
