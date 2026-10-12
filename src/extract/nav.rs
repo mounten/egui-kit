@@ -82,8 +82,9 @@ impl<'f> Nav<'f> {
     }
 
     /// Whether this is the previous page, rendered while a [`ViewTransition`](crate::ViewTransition)
-    /// animates it out. Its navigation calls are ignored. Skip things that live outside the
-    /// page's `Ui` (windows, modals, popups), which the transition can't fade or clip.
+    /// animates it out. Its `Ui` is disabled (without looking so), and its navigation calls are
+    /// ignored. Skip things that live outside the page's `Ui` (windows, modals, popups), which
+    /// the transition can't fade, clip or disable.
     pub fn is_outgoing(&self) -> bool {
         self.frame.outgoing
     }

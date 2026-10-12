@@ -24,7 +24,12 @@ impl AppState {
 
 fn page(name: &'static str) -> Page<AppState> {
     Page::new(
-        move |_: &mut Ui, State(state): State<&AppState>, nav: Nav<'_>, navigation: Navigation| {
+        move |ui: &mut Ui, State(state): State<&AppState>, nav: Nav<'_>, navigation: Navigation| {
+            assert_eq!(
+                ui.is_enabled(),
+                !nav.is_outgoing(),
+                "only the outgoing page is disabled"
+            );
             let outgoing = if nav.is_outgoing() { "-out" } else { "" };
             state.push(format!(
                 "{name}{outgoing}({:?},{:?})",
@@ -213,4 +218,29 @@ fn navigation_direction_with_history() {
     let last = frame(&ctx, &mut app, 10.0);
     assert_eq!(last, ["root", "home(Popstate,Back)"]);
     assert_eq!(app.request().unwrap().path(), "/");
+}
+
+#[test]
+fn the_outgoing_page_keeps_its_opacity() {
+    let ctx = egui::Context::default();
+    let opacity = Rc::new(RefCell::new(Vec::new()));
+    let seen = Rc::clone(&opacity);
+    let mut app = Router::new()
+        .layout(Layout::new(|ui: &mut Ui, outlet: Outlet<'_>| {
+            ViewTransition::fade().duration(1.0).show(ui, outlet);
+        }))
+        .page(
+            "/",
+            Page::new(move |ui: &mut Ui| seen.borrow_mut().push(ui.opacity())),
+        )
+        .page("/about", Page::new(|_: &mut Ui| {}))
+        .with_state_and_history(AppState::default(), MemoryHistory::new("/"));
+    frame(&ctx, &mut app, 0.0);
+    app.goto("/about");
+    frame(&ctx, &mut app, 1.0);
+    assert_eq!(
+        *opacity.borrow(),
+        [1.0, 1.0],
+        "the fade starts at full opacity"
+    );
 }
