@@ -278,6 +278,9 @@ fn shallow_routing() {
     // New entry with state, same page, no load.
     act(&ctx, &mut app, |nav| nav.push_state("/photos/3", 3u32));
     assert_eq!(frame(&ctx, &mut app), ["root-layout", "photos:/photos/3:3"]);
+    act(&ctx, &mut app, |nav| {
+        assert!(nav.is_active("/photos/3"), "the shallow url is active");
+    });
     act(&ctx, &mut app, |nav| nav.replace_state("", 4u32));
     assert_eq!(frame(&ctx, &mut app), ["root-layout", "photos:/photos/3:4"]);
     assert_eq!(loads(), 1);

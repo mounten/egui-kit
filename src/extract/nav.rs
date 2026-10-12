@@ -75,10 +75,11 @@ impl<'f> Nav<'f> {
         self.frame.url
     }
 
-    /// Whether `href` is the current path, or (for anything but `/`) a parent of it.
+    /// Whether `href` is the current path, or (for anything but `/`) a parent of it. The path
+    /// is [`Nav::url`]'s, so it follows shallow routing.
     pub fn is_active(&self, href: &str) -> bool {
-        let href = crate::router::normalize(href.split('?').next().unwrap_or_default());
-        let path = self.frame.request.untracked_path();
+        let path = |url: &str| crate::router::normalize(url.split('?').next().unwrap_or_default());
+        let (href, path) = (path(href), path(self.frame.url));
         path == href
             || (href != "/" && path.starts_with(&href) && path[href.len()..].starts_with('/'))
     }
