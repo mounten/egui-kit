@@ -444,7 +444,9 @@ impl<'f, S: Clone + 'static> Remote<'f, S> {
 /// The state of a view's command.
 struct CommandSlot<T> {
     pending: usize,
-    output: Option<T>,
+    /// How the last run ended, until the view takes it.
+    outcome: Option<Result<T, RouteError>>,
+    /// Why the last run failed, until it runs again.
     error: Option<RouteError>,
 }
 
@@ -452,7 +454,7 @@ impl<T> Default for CommandSlot<T> {
     fn default() -> Self {
         Self {
             pending: 0,
-            output: None,
+            outcome: None,
             error: None,
         }
     }
@@ -491,16 +493,16 @@ impl<S: Clone + 'static, C: Command<S>> CommandHandle<'_, S, C> {
                 let result = future.await;
                 let mut slot = slot.borrow_mut();
                 slot.pending -= 1;
-                match result {
-                    Ok(output) => {
-                        slot.output = Some(output);
-                        refreshes
-                    }
-                    Err(error) => {
-                        slot.error = Some(error);
-                        Vec::new()
-                    }
+                if let Err(error) = &result {
+                    slot.error = Some(error.clone());
                 }
+                let refreshes = if result.is_ok() {
+                    refreshes
+                } else {
+                    Vec::new()
+                };
+                slot.outcome = Some(result);
+                refreshes
             }));
         self.remote.frame.ctx.request_repaint();
     }
@@ -510,13 +512,50 @@ impl<S: Clone + 'static, C: Command<S>> CommandHandle<'_, S, C> {
         self.slot.borrow().pending > 0
     }
 
-    /// What the command returned when it last succeeded, taken so that the view acts on it
+    /// What the command returned, if its last run succeeded: taken, so that the view acts on it
     /// once (e.g. navigates to what it created).
     pub fn take_output(&self) -> Option<C::Output> {
-        self.slot.borrow_mut().output.take()
+        let mut slot = self.slot.borrow_mut();
+        match slot.outcome.take()? {
+            Ok(output) => Some(output),
+            Err(error) => {
+                slot.outcome = Some(Err(error));
+                None
+            }
+        }
     }
 
-    /// Why the command last failed. Cleared when it runs again.
+    /// Why the last run failed, taken like [`take_output`](Self::take_output): to react once
+    /// to a failure (a dialog, a shake). [`error`](Self::error) still has it.
+    pub fn take_error(&self) -> Option<RouteError> {
+        let mut slot = self.slot.borrow_mut();
+        match slot.outcome.take()? {
+            Ok(output) => {
+                slot.outcome = Some(Ok(output));
+                None
+            }
+            Err(error) => Some(error),
+        }
+    }
+
+    /// How the last run ended, taken: once per run, in the frame after it completed (unless
+    /// taken with [`take_output`](Self::take_output) or [`take_error`](Self::take_error)).
+    ///
+    /// ```
+    /// # use egui_kit::remote::{Command, CommandHandle};
+    /// # fn react<S: Clone + 'static, C: Command<S>>(ui: &mut egui::Ui, save: CommandHandle<'_, S, C>) {
+    /// match save.take_result() {
+    ///     Some(Ok(_)) => { /* close the dialog */ }
+    ///     Some(Err(error)) => { /* show the error in a toast */ }
+    ///     None => {}
+    /// }
+    /// # }
+    /// ```
+    pub fn take_result(&self) -> Option<Result<C::Output, RouteError>> {
+        self.slot.borrow_mut().outcome.take()
+    }
+
+    /// Why the command last failed, to show it: kept until it runs again.
     pub fn error(&self) -> Option<RouteError> {
         self.slot.borrow().error.clone()
     }
