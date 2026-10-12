@@ -256,6 +256,33 @@
 //! refreshes the loads and queries that depend on what it changed. Views use both through the
 //! [`Remote`](extract::Remote) extractor; see the [`remote`] module.
 //!
+//! # Async runtimes
+//!
+//! Hooks, loads, queries and commands are polled by the router, on the UI thread, while it draws
+//! a frame; a future wakes it up with a repaint. That's all the browser's futures need on the
+//! web. Natively, futures that rely on Tokio (like `reqwest`'s) panic with "there is no reactor
+//! running" when polled outside of a Tokio runtime. Enter a multi-threaded runtime around
+//! [`RouterApp::ui`]: its threads drive timers and sockets, and wake the router up.
+//!
+//! ```ignore
+//! struct App {
+//!     runtime: tokio::runtime::Runtime, // `Runtime::new()`, i.e. multi-threaded
+//!     router: RouterApp<AppState>,
+//! }
+//!
+//! impl eframe::App for App {
+//!     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+//!         let _runtime = self.runtime.enter();
+//!         self.router.ui(ui);
+//!     }
+//! }
+//! ```
+//!
+//! Futures created outside of `ui` (with [`RouterApp::goto`], say) are only polled inside it.
+//! A current-thread runtime doesn't work this way: nothing drives it between frames.
+//! Alternatively, spawn the work on the runtime and await its `JoinHandle`, which works from
+//! any executor.
+//!
 //! # State
 //!
 //! The state passed to [`Router::with_state`] is available everywhere with the
