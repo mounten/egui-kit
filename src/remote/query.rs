@@ -12,7 +12,7 @@ use egui::{AsId, Id};
 use web_time::Instant;
 
 use super::runtime::{self, Abort, BoxFuture, MaybeSend};
-use super::{CACHE_FOR, Entry, context, lock, with_registry};
+use super::{CACHE_FOR, Entry, context, lock, request_repaint, shared_context, with_registry};
 use crate::load::Invalidation;
 
 /// Where a fetch puts its result.
@@ -328,15 +328,13 @@ impl<T: MaybeSend + 'static, E: MaybeSend + 'static> Query<T, E> {
     fn start(&self) -> Run<T, E> {
         let slot: Slot<T, E> = Arc::default();
         let future = (self.fetch)();
-        let ctx = context();
+        let ctx = shared_context();
         let task = runtime::spawn({
             let slot = Arc::clone(&slot);
             async move {
                 let result = future.await;
                 *lock(&slot) = Some(result);
-                if let Some(ctx) = ctx {
-                    ctx.request_repaint();
-                }
+                request_repaint(&ctx);
             }
         });
         Run { slot, _task: task }

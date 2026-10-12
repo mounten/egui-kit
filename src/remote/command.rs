@@ -7,7 +7,7 @@ use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
 use super::runtime::{self, MaybeSend};
-use super::{lock, with_registry};
+use super::{lock, request_repaint, shared_context, with_registry};
 
 /// Where a run puts its result.
 type Slot<T, E> = Arc<Mutex<Option<Result<T, E>>>>;
@@ -71,8 +71,8 @@ impl<T: MaybeSend + 'static, E: MaybeSend + 'static> Command<T, E> {
     pub fn run(&self, future: impl Future<Output = Result<T, E>> + MaybeSend + 'static) {
         let slot: Slot<T, E> = Arc::default();
         let refreshes = self.refreshes.clone();
-        let (invalidated, ctx) =
-            with_registry(|registry| (Arc::clone(&registry.invalidated), registry.ctx.clone()));
+        let invalidated = with_registry(|registry| Arc::clone(&registry.invalidated));
+        let ctx = shared_context();
         runtime::spawn_detached({
             let slot = Arc::clone(&slot);
             async move {
@@ -81,9 +81,7 @@ impl<T: MaybeSend + 'static, E: MaybeSend + 'static> Command<T, E> {
                     lock(&invalidated).extend(refreshes);
                 }
                 *lock(&slot) = Some(result);
-                if let Some(ctx) = ctx {
-                    ctx.request_repaint();
-                }
+                request_repaint(&ctx);
             }
         });
         let mut state = self.state.borrow_mut();
