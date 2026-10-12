@@ -147,7 +147,21 @@ impl Nav<'_> {
         response
     }
 
-    fn follow(&self, response: &Response, href: &str) {
+    /// Makes any widget behave like a [link](Self::link) to `href`: a click navigates there,
+    /// hovering preloads it and lets the browser show it (see `BrowserHistory::link_preview`),
+    /// which then also opens Ctrl/Cmd/Shift-clicks in a new tab.
+    ///
+    /// ```
+    /// # use egui_kit::extract::Nav;
+    /// fn card(ui: &mut egui::Ui, nav: Nav, title: &str, href: &str) {
+    ///     let response = egui::Frame::group(ui.style())
+    ///         .show(ui, |ui| ui.heading(title))
+    ///         .response
+    ///         .interact(egui::Sense::click());
+    ///     nav.follow(&response, href);
+    /// }
+    /// ```
+    pub fn follow(&self, response: &Response, href: &str) {
         if response.hovered() && !self.frame.outgoing {
             self.frame.nav.borrow_mut().hovered_link = Some(href.to_owned());
         }
