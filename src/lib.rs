@@ -254,7 +254,8 @@
 //! [`Query`](remote::Query) is async data any view can read, cached by value, and a
 //! [`Command`](remote::Command) an async mutation that a view starts and watches. A command
 //! refreshes the loads and queries that depend on what it changed. Views use both through the
-//! [`Remote`](extract::Remote) extractor; see the [`remote`] module.
+//! [`Remote`](extract::Remote) extractor; see the [`remote`] module. For async work outside of
+//! the router, a [`Task`](task::Task) polls a future from your own frames.
 //!
 //! # Async runtimes
 //!
@@ -388,6 +389,7 @@ mod render;
 mod request;
 mod router;
 mod session;
+pub mod task;
 mod transition;
 
 pub use app::RouterApp;
