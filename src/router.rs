@@ -69,6 +69,9 @@ impl<S: Clone + 'static> Router<S> {
 
     /// Adds the routes of `router` at the same level, keeping its layout, hooks and error page
     /// scoped to its own routes.
+    ///
+    /// Paths that match no route are a 404 of this router, not of `router`: its error page only
+    /// shows the errors of its own routes.
     pub fn merge(self, router: Self) -> Self {
         self.nest("/", router)
     }
@@ -91,7 +94,8 @@ impl<S: Clone + 'static> Router<S> {
     }
 
     /// Sets the error page for errors of this router's routes, including
-    /// paths below its prefix that match no route (404).
+    /// paths below its prefix that match no route (404). For a router [merged](Self::merge) into
+    /// another, those 404s go to the other router's error page.
     ///
     /// The view extracts the error as `&RouteError`, like a page extracts its data.
     /// It is rendered inside this router's layout. Errors raised by the layout's own `load`
@@ -161,12 +165,19 @@ impl<S: Clone + 'static> Router<S> {
 
     pub(crate) fn into_table(self) -> RouteTable<S> {
         let mut table = RouteTable::default();
-        self.flatten("/", &[], &mut table);
+        self.flatten("/", None, &[], &mut table);
         table.validate();
         table
     }
 
-    fn flatten(self, prefix: &str, parents: &[Rc<Level<S>>], table: &mut RouteTable<S>) {
+    /// `parent_prefix` is `None` for the root router.
+    fn flatten(
+        self,
+        prefix: &str,
+        parent_prefix: Option<&str>,
+        parents: &[Rc<Level<S>>],
+        table: &mut RouteTable<S>,
+    ) {
         for (name, matcher) in self.matchers {
             assert!(
                 table.matchers.insert(name.clone(), matcher).is_none(),
@@ -187,7 +198,10 @@ impl<S: Clone + 'static> Router<S> {
             params: Pattern::parse(prefix).param_count(),
         }));
 
-        table.add_fallback(prefix, levels.clone());
+        // A merged router shares its parent's prefix, whose fallback comes first and wins.
+        if parent_prefix != Some(prefix) {
+            table.add_fallback(prefix, levels.clone());
+        }
         for (path, page) in self.routes {
             let levels = match &page.reset {
                 Some(reset) => reset_layouts(&levels, reset),
@@ -196,7 +210,7 @@ impl<S: Clone + 'static> Router<S> {
             table.add_page(&join(prefix, &path), levels, page);
         }
         for (nested_prefix, router) in self.nested {
-            router.flatten(&join(prefix, &nested_prefix), &levels, table);
+            router.flatten(&join(prefix, &nested_prefix), Some(prefix), &levels, table);
         }
     }
 }

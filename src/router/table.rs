@@ -193,6 +193,25 @@ mod tests {
     }
 
     #[test]
+    fn merged_routers_leave_404s_to_their_parent() {
+        let error = |_: &mut egui::Ui, _: &crate::RouteError| {};
+        let table = Router::<()>::new()
+            .page("/", page())
+            .merge(Router::new().error(error).page("/merged", page()))
+            .nest(
+                "/nested",
+                Router::new().merge(Router::new().error(error).page("/", page())),
+            )
+            .into_table();
+        assert_eq!(table.fallbacks.len(), 2);
+        let (entry, _) = table.resolve("/nope");
+        assert!(entry.levels.iter().all(|level| level.error.is_none()));
+        let (entry, req) = table.resolve("/nested/nope");
+        assert_eq!(req.route(), "/nested/{*__not_found}");
+        assert_eq!(entry.levels.len(), 2);
+    }
+
+    #[test]
     #[should_panic(expected = "conflicting routes")]
     fn conflicts() {
         Router::<()>::new()
