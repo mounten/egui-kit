@@ -28,6 +28,7 @@
 //! | [`Nav`] | the router: links, `goto`, back/forward, loading, invalidation, shallow routing, blocking |
 //! | [`Scroll`] | the page's scroll area, whose position the router restores |
 //! | [`PageState<T>`] | state the view owns while its page is shown |
+//! | [`PageStateFrom<T>`] | like [`PageState`], created from the `load`'s data |
 //! | [`Snapshot<T>`] | like [`PageState`], and restored when coming back with back/forward |
 //! | [`PersistentState<T>`] | app-wide state that survives app restarts, like `localStorage` |
 //! | [`HistoryState<&T>`](HistoryState) | the shallow-routing state of the current history entry |
@@ -89,7 +90,7 @@ pub(crate) use scroll::PageScroll;
 pub use scroll::Scroll;
 pub use state::{FromRef, State};
 pub(crate) use view_state::ViewStore;
-pub use view_state::{PageState, Snapshot};
+pub use view_state::{PageState, PageStateFrom, Snapshot, SnapshotFrom};
 
 /// Types that can be extracted from a navigation, used as arguments of hooks and `load`s.
 ///
@@ -149,6 +150,11 @@ pub trait FromView<S: 'static, D>: Sized {
     /// Whether this takes the view's data mutably (`&mut D`).
     #[doc(hidden)]
     const BORROWS_DATA_MUT: bool = false;
+
+    /// Called for every extractor of a view before any is extracted, e.g. to read the data
+    /// before an extractor takes it.
+    #[doc(hidden)]
+    fn prepare(_cx: &ViewContext<'_, S>) {}
 
     fn from_view<'f>(cx: &'f ViewContext<'_, S>) -> Self::Item<'f>;
 }

@@ -337,7 +337,8 @@
 //! ## View state
 //!
 //! Views can own state that the router keeps for them. It is created with `T::default()` the
-//! first time a view extracts it.
+//! first time a view extracts it, or from the `load`'s data with
+//! [`PageStateFrom<T>`](extract::PageStateFrom) and [`SnapshotFrom<T>`](extract::SnapshotFrom).
 //!
 //! | | Lives |
 //! |---|---|

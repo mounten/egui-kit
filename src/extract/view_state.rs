@@ -17,11 +17,11 @@ use crate::remote::CommandSlots;
 pub(crate) struct TypeMap(RefCell<HashMap<TypeId, Option<Box<dyn Any>>>>);
 
 impl TypeMap {
-    fn take<T: Default + 'static>(&self) -> Box<T> {
+    fn take<T: 'static>(&self, init: impl FnOnce() -> T) -> Box<T> {
         let mut map = self.0.borrow_mut();
         let slot = map
             .entry(TypeId::of::<T>())
-            .or_insert_with(|| Some(Box::new(T::default())));
+            .or_insert_with(|| Some(Box::new(init())));
         let value = slot.take().unwrap_or_else(|| {
             panic!(
                 "egui-kit: a view can only extract `{}` once",
@@ -33,6 +33,10 @@ impl TypeMap {
 
     fn put<T: 'static>(&self, value: Box<T>) {
         self.0.borrow_mut().insert(TypeId::of::<T>(), Some(value));
+    }
+
+    fn contains<T: 'static>(&self) -> bool {
+        self.0.borrow().contains_key(&TypeId::of::<T>())
     }
 
     pub(crate) fn take_all(&self) -> Self {
@@ -59,24 +63,23 @@ impl ViewStore {
     }
 }
 
+/// Makes a view state from the view's data.
+fn from_data<S, D: 'static, T: for<'d> From<&'d D>>(cx: &ViewContext<'_, S>) -> T {
+    cx.peek_data(|data| {
+        T::from(
+            data.downcast_ref::<D>()
+                .expect("egui-kit: the data does not match the view (this is a bug)"),
+        )
+    })
+}
+
+/// A view state type: a value taken out of its map while the view uses it.
 macro_rules! view_state {
-    ($(#[$doc:meta])* $name:ident, $map:ident) => {
+    ($(#[$doc:meta])* $name:ident) => {
         $(#[$doc])*
         pub struct $name<'f, T: 'static> {
             value: Option<Box<T>>,
             map: &'f TypeMap,
-        }
-
-        impl<S: 'static, D, T: Default + 'static> FromView<S, D> for $name<'_, T> {
-            type Item<'f> = $name<'f, T>;
-
-            fn from_view<'f>(cx: &'f ViewContext<'_, S>) -> $name<'f, T> {
-                let map = &cx.store().$map;
-                $name {
-                    value: Some(map.take()),
-                    map,
-                }
-            }
         }
 
         impl<T> Deref for $name<'_, T> {
@@ -104,6 +107,46 @@ macro_rules! view_state {
         impl<T: fmt::Debug> fmt::Debug for $name<'_, T> {
             fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                 f.debug_tuple(stringify!($name)).field(&**self).finish()
+            }
+        }
+    };
+}
+
+/// The extractors of a view state, created with `T::default()` and from the view's data.
+macro_rules! view_state_extractors {
+    ($default:ident, $from:ident, $map:ident) => {
+        impl<S: 'static, D, T: Default + 'static> FromView<S, D> for $default<'_, T> {
+            type Item<'f> = $default<'f, T>;
+
+            fn from_view<'f>(cx: &'f ViewContext<'_, S>) -> $default<'f, T> {
+                let map = &cx.store().$map;
+                $default {
+                    value: Some(map.take(T::default)),
+                    map,
+                }
+            }
+        }
+
+        impl<S: 'static, D: 'static, T> FromView<S, D> for $from<'_, T>
+        where
+            T: for<'d> From<&'d D> + 'static,
+        {
+            type Item<'f> = $from<'f, T>;
+
+            // Before any extractor takes the data.
+            fn prepare(cx: &ViewContext<'_, S>) {
+                let map = &cx.store().$map;
+                if !map.contains::<T>() {
+                    map.put(Box::new(from_data::<S, D, T>(cx)));
+                }
+            }
+
+            fn from_view<'f>(cx: &'f ViewContext<'_, S>) -> $from<'f, T> {
+                let map = &cx.store().$map;
+                $from {
+                    value: Some(map.take(|| from_data::<S, D, T>(cx))),
+                    map,
+                }
             }
         }
     };
@@ -137,10 +180,40 @@ view_state!(
     /// }
     /// ```
     ///
-    /// To start from the `load`'s data, make the field an `Option` and fill it on first use:
-    /// `draft.title.get_or_insert_with(|| data.title.clone())`.
-    PageState,
-    page
+    /// To start from the `load`'s data, see [`PageStateFrom`].
+    PageState
+);
+
+view_state!(
+    /// Like [`PageState`], but created from the view's data (what its `load` returned) with
+    /// `T::from(&data)`, the first time it is extracted.
+    ///
+    /// ```
+    /// use egui::Ui;
+    /// use egui_kit::extract::PageStateFrom;
+    ///
+    /// struct Post {
+    ///     title: String,
+    /// }
+    ///
+    /// struct Form {
+    ///     title: String,
+    /// }
+    ///
+    /// impl From<&Post> for Form {
+    ///     fn from(post: &Post) -> Self {
+    ///         Self { title: post.title.clone() }
+    ///     }
+    /// }
+    ///
+    /// fn edit(ui: &mut Ui, post: &Post, mut form: PageStateFrom<Form>) {
+    ///     ui.label(format!("Editing {}", post.title));
+    ///     ui.text_edit_singleline(&mut form.title);
+    /// }
+    /// ```
+    ///
+    /// It shares its value with a [`PageState`] of the same type.
+    PageStateFrom
 );
 
 view_state!(
@@ -165,6 +238,15 @@ view_state!(
     ///     ui.text_edit_singleline(&mut search.text);
     /// }
     /// ```
-    Snapshot,
-    snapshot
+    Snapshot
 );
+
+view_state!(
+    /// Like [`Snapshot`], but created from the view's data (what its `load` returned) with
+    /// `T::from(&data)`, like a [`PageStateFrom`]. A snapshot that comes back with back/forward
+    /// keeps its value.
+    SnapshotFrom
+);
+
+view_state_extractors!(PageState, PageStateFrom, page);
+view_state_extractors!(Snapshot, SnapshotFrom, snapshot);
