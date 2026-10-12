@@ -62,6 +62,60 @@ pub trait History {
     fn hover_link(&mut self, _url: Option<&str>) {}
 }
 
+/// A history chosen at runtime, e.g. a [`MemoryHistory`] in tests and the default one otherwise.
+///
+/// ```
+/// use egui_kit::{History, MemoryHistory, Router, default_history};
+///
+/// let history: Box<dyn History> = if cfg!(test) {
+///     Box::new(MemoryHistory::new("/settings"))
+/// } else {
+///     Box::new(default_history())
+/// };
+/// let app = Router::<()>::new().with_state_and_history((), history);
+/// ```
+impl<H: History + ?Sized> History for Box<H> {
+    fn current(&self) -> HistoryEntry {
+        (**self).current()
+    }
+
+    fn push(&mut self, url: &str) -> EntryKey {
+        (**self).push(url)
+    }
+
+    fn replace(&mut self, url: &str) {
+        (**self).replace(url);
+    }
+
+    fn back(&mut self) {
+        (**self).back();
+    }
+
+    fn forward(&mut self) {
+        (**self).forward();
+    }
+
+    fn can_go_back(&self) -> bool {
+        (**self).can_go_back()
+    }
+
+    fn can_go_forward(&self) -> bool {
+        (**self).can_go_forward()
+    }
+
+    fn poll(&mut self, ctx: &egui::Context) -> Option<HistoryEntry> {
+        (**self).poll(ctx)
+    }
+
+    fn shows_links(&self) -> bool {
+        (**self).shows_links()
+    }
+
+    fn hover_link(&mut self, url: Option<&str>) {
+        (**self).hover_link(url);
+    }
+}
+
 /// `BrowserHistory` on wasm, [`MemoryHistory`] starting at `/` elsewhere.
 pub fn default_history() -> impl History {
     #[cfg(target_arch = "wasm32")]
