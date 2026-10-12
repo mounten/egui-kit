@@ -91,14 +91,21 @@ impl<S> RouteTable<S> {
         let mut params = m.params;
         params.retain(|param| param.name != FALLBACK_PARAM);
         let request = request.with_route(entry.pattern.as_str(), params);
-        (entry, request)
+        (Rc::clone(entry), request)
     }
 
-    fn best_match(
+    /// The pattern of the page route that `url` matches, `None` for a 404.
+    pub(crate) fn page_route(&self, url: &str) -> Option<&str> {
+        let request = Request::new(url);
+        let (entry, _) = self.best_match(&self.routes, request.untracked_path())?;
+        Some(entry.pattern.as_str())
+    }
+
+    fn best_match<'t>(
         &self,
-        entries: &[Rc<RouteEntry<S>>],
+        entries: &'t [Rc<RouteEntry<S>>],
         path: &str,
-    ) -> Option<(Rc<RouteEntry<S>>, Match)> {
+    ) -> Option<(&'t Rc<RouteEntry<S>>, Match)> {
         let mut best: Option<(&Rc<RouteEntry<S>>, Match)> = None;
         for entry in entries {
             if let Some(m) = entry.pattern.matches(path, &self.matchers) {
@@ -111,7 +118,7 @@ impl<S> RouteTable<S> {
                 }
             }
         }
-        best.map(|(entry, m)| (Rc::clone(entry), m))
+        best
     }
 }
 

@@ -119,6 +119,26 @@ impl<S: Clone + 'static> RouterApp<S> {
         self.remote.spawner()
     }
 
+    /// The pattern of the page route that `url` matches, e.g. `/blog/{slug}`, or `None` if it
+    /// matches none (a 404). Doesn't navigate or run anything: e.g. to check in a test that
+    /// every address the app builds leads to a page.
+    ///
+    /// A match can still fail to load, e.g. with a [`Path`](crate::extract::Path) that doesn't
+    /// parse.
+    ///
+    /// ```
+    /// # use egui_kit::{MemoryHistory, Router};
+    /// # use egui_kit::page::Page;
+    /// let app = Router::<()>::new()
+    ///     .page("/blog/{slug}", Page::new(|_: &mut egui::Ui| {}))
+    ///     .with_state_and_history((), MemoryHistory::new("/"));
+    /// assert_eq!(app.matches("/blog/hello?draft"), Some("/blog/{slug}"));
+    /// assert_eq!(app.matches("/blog"), None);
+    /// ```
+    pub fn matches(&self, url: &str) -> Option<&str> {
+        self.table.page_route(url)
+    }
+
     /// The request of the page on screen.
     pub fn request(&self) -> Option<&Request> {
         self.mounted.as_ref().map(|mounted| &mounted.request)
