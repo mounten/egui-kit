@@ -3,6 +3,7 @@
 use core::cell::{Cell, RefCell};
 use core::future::{Future, poll_fn, ready};
 use core::task::Poll;
+use core::time::Duration;
 use std::rc::Rc;
 
 use egui::Ui;
@@ -86,6 +87,24 @@ impl Query<AppState> for Double {
     fn run(self, state: AppState) -> impl Future<Output = Result<u32, RouteError>> {
         state.ran(format!("double:{}", self.0));
         ready(Ok(self.0 * 2))
+    }
+}
+
+/// Polls `count` every 5 seconds.
+#[derive(Clone, PartialEq)]
+struct Inbox;
+
+impl Query<AppState> for Inbox {
+    type Output = u32;
+
+    async fn run(self, state: AppState) -> Result<u32, RouteError> {
+        state.ran("inbox");
+        state.gate().await;
+        Ok(state.count.get())
+    }
+
+    fn refetch_every(&self) -> Option<Duration> {
+        Some(Duration::from_secs(5))
     }
 }
 
@@ -286,4 +305,50 @@ fn commands_complete_after_their_page_is_left() {
     app.state().gate.set(true);
     frame(&ctx, &mut app);
     assert_eq!(app.state().count.get(), 1);
+}
+
+#[test]
+fn queries_refetch_periodically_while_read() {
+    let ctx = egui::Context::default();
+    let mut app = Router::new()
+        .page(
+            "/",
+            Page::new(
+                |_: &mut Ui, State(state): State<&AppState>, remote: Remote<'_, AppState>| {
+                    if state.show.get() {
+                        let inbox = remote.query(Inbox);
+                        state
+                            .seen
+                            .borrow_mut()
+                            .push(format!("{:?}", inbox.current()));
+                    }
+                },
+            ),
+        )
+        .with_state_and_history(AppState::default(), MemoryHistory::new("/"));
+    let state = app.state().clone();
+    let mut frame_at = |time: f64| {
+        let input = egui::RawInput {
+            time: Some(time),
+            ..Default::default()
+        };
+        let mut output = ctx.run_ui(input, |ui| app.ui(ui));
+        output.textures_delta.clear();
+        let runs = core::mem::take(&mut *state.runs.borrow_mut());
+        (runs, state.seen.borrow_mut().pop().unwrap_or_default())
+    };
+
+    assert_eq!(frame_at(0.0), (vec!["inbox".to_owned()], "Some(0)".into()));
+    assert_eq!(frame_at(4.9).0, NOTHING);
+
+    // Due: it reruns, keeping the previous value meanwhile.
+    state.gate.set(false);
+    state.count.set(3);
+    assert_eq!(frame_at(5.0), (vec!["inbox".to_owned()], "Some(0)".into()));
+    state.gate.set(true);
+    assert_eq!(frame_at(7.0), (vec![], "Some(3)".into()));
+
+    // The next run is due 5 seconds after the last one finished.
+    assert_eq!(frame_at(11.9).0, NOTHING);
+    assert_eq!(frame_at(12.0).0, ["inbox"]);
 }
