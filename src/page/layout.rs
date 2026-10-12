@@ -19,6 +19,8 @@ pub struct Layout<S> {
     pub(crate) reset: Option<LayoutReset>,
     /// Set once the layout rendered its outlet with a `ViewTransition`.
     pub(crate) transitions: Cell<bool>,
+    /// Whether the view takes its data as `&mut D`, which keeps the views below from reading it.
+    pub(crate) data_mut: bool,
 }
 
 impl<S: 'static> Layout<S> {
@@ -29,6 +31,7 @@ impl<S: 'static> Layout<S> {
     {
         Self {
             loader: Loader::new(unit()),
+            data_mut: view.borrows_data_mut(),
             view: Rc::new(move |ui, outlet, cx| view.call(ui, outlet, cx)),
             reset: None,
             transitions: Cell::new(false),
@@ -36,7 +39,8 @@ impl<S: 'static> Layout<S> {
     }
 
     /// A layout whose view can extract the data produced by `load` (as `&mut D` or `&D`).
-    /// The loads below can read it with [`Parent`](crate::extract::Parent).
+    /// The loads below can read it with [`Parent`](crate::extract::Parent), and the views below
+    /// with [`LayoutData`](crate::extract::LayoutData) unless this view takes it as `&mut D`.
     pub fn with_load<H, T, D, E, V, U>(load: H, view: V) -> Self
     where
         H: Handler<T, S, Output = Result<D, E>>,
@@ -46,6 +50,7 @@ impl<S: 'static> Layout<S> {
     {
         Self {
             loader: Loader::new(erase(load)),
+            data_mut: view.borrows_data_mut(),
             view: Rc::new(move |ui, outlet, cx| view.call(ui, outlet, cx)),
             reset: None,
             transitions: Cell::new(false),

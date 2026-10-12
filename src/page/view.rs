@@ -7,6 +7,7 @@ use core::cell::{Cell, RefCell};
 use egui::Ui;
 
 use crate::extract::{FromView, Nav, NavState, PageScroll, ViewStore};
+use crate::load::Loaded;
 use crate::navigation::Navigation;
 use crate::remote::RemoteStore;
 use crate::request::Request;
@@ -27,27 +28,38 @@ pub(crate) struct Frame<'a> {
     pub(crate) remote: &'a RemoteStore,
 }
 
+/// The data of a view: shared for layouts whose view doesn't take it as `&mut D`, so that the
+/// views below can read it too.
+pub(crate) enum ViewData<'a> {
+    Mut(&'a mut (dyn Any + 'static)),
+    Shared(&'a (dyn Any + 'static)),
+}
+
 /// What a view's extractors are extracted from: the app state, the page and the view's data.
 pub struct ViewContext<'a, S> {
     state: &'a S,
     frame: &'a Frame<'a>,
     /// The data of the view, until an extractor takes it.
-    data: Cell<Option<&'a mut (dyn Any + 'static)>>,
+    data: Cell<Option<ViewData<'a>>>,
     store: &'a ViewStore,
+    /// The data of the layouts around the view, outermost first.
+    layouts: &'a [Option<Loaded>],
 }
 
 impl<'a, S> ViewContext<'a, S> {
     pub(crate) fn new(
         state: &'a S,
         frame: &'a Frame<'a>,
-        data: &'a mut (dyn Any + 'static),
+        data: ViewData<'a>,
         store: &'a ViewStore,
+        layouts: &'a [Option<Loaded>],
     ) -> Self {
         Self {
             state,
             frame,
             data: Cell::new(Some(data)),
             store,
+            layouts,
         }
     }
 
@@ -69,10 +81,30 @@ impl<'a, S> ViewContext<'a, S> {
     }
 
     /// Takes the view's data; it can only be extracted once.
-    pub(crate) fn take_data(&self) -> &'a mut (dyn Any + 'static) {
+    pub(crate) fn take_data(&self) -> &'a (dyn Any + 'static) {
+        match self.take() {
+            ViewData::Mut(data) => data,
+            ViewData::Shared(data) => data,
+        }
+    }
+
+    /// Takes the view's data mutably; it can only be extracted once.
+    pub(crate) fn take_data_mut(&self) -> &'a mut (dyn Any + 'static) {
+        match self.take() {
+            ViewData::Mut(data) => data,
+            ViewData::Shared(_) => panic!("egui-kit: the data is shared (this is a bug)"),
+        }
+    }
+
+    fn take(&self) -> ViewData<'a> {
         self.data
             .take()
             .expect("egui-kit: a view can only extract its data once")
+    }
+
+    /// The data of the layouts around the view, outermost first.
+    pub(crate) fn layouts(&self) -> &'a [Option<Loaded>] {
+        self.layouts
     }
 }
 
@@ -113,6 +145,13 @@ pub trait View<T, S, D>: 'static {
 )]
 pub trait LayoutView<T, S, D>: 'static {
     fn call(&self, ui: &mut Ui, outlet: Outlet<'_>, cx: &ViewContext<'_, S>);
+
+    /// Whether the view takes its data as `&mut D`. If not, the views below can read it with
+    /// [`LayoutData`](crate::extract::LayoutData).
+    #[doc(hidden)]
+    fn borrows_data_mut(&self) -> bool {
+        true
+    }
 }
 
 // Both `Fn` bounds are needed: the first infers the extractor types from the function, the
@@ -163,6 +202,10 @@ macro_rules! impl_views {
                 }
                 $(let $ty = $ty::from_view(cx);)*
                 call_inner(self, ui, outlet, $($ty),*)
+            }
+
+            fn borrows_data_mut(&self) -> bool {
+                [$(<$ty as FromView<S, D>>::BORROWS_DATA_MUT),*].contains(&true)
             }
         }
     };

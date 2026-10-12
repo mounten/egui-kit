@@ -10,7 +10,7 @@ use crate::error::RouteError;
 use crate::extract::{Nav, NavState, PageScroll, ViewStore};
 use crate::load::Loaded;
 use crate::navigation::{Direction, Navigation};
-use crate::page::{ErasedView, Frame, NodeId, Outlet, Page, ViewContext};
+use crate::page::{ErasedView, Frame, NodeId, Outlet, Page, ViewContext, ViewData};
 use crate::remote::RemoteStore;
 use crate::request::Request;
 use crate::router::Level;
@@ -140,16 +140,21 @@ impl<S> Mounted<S> {
             nav,
             remote,
         };
+        let above: &[Option<Loaded>] = &layouts[..depth];
         let mut leaf = |ui: &mut Ui| match content {
             Content::Page { page, data } => {
                 let mut data = data.data.borrow_mut();
-                (page.view)(ui, &ViewContext::new(state, &frame, &mut **data, store));
+                let data = ViewData::Mut(&mut **data);
+                (page.view)(ui, &ViewContext::new(state, &frame, data, store, above));
             }
             Content::Error {
                 view: Some(view),
                 error,
                 ..
-            } => view(ui, &ViewContext::new(state, &frame, error, store)),
+            } => view(
+                ui,
+                &ViewContext::new(state, &frame, ViewData::Mut(error), store, above),
+            ),
             Content::Error {
                 view: None, error, ..
             } => default_error_view(ui, Nav { frame: &frame }, error),
@@ -158,6 +163,8 @@ impl<S> Mounted<S> {
             levels: &levels[from..depth],
             layouts: &layouts[from..depth],
             stores: &layout_stores[from..depth],
+            all_layouts: layouts,
+            start: from,
         };
         render_levels(ui, state, &frame, chain, &mut leaf, handoff);
     }
@@ -239,6 +246,9 @@ struct Chain<'m, S> {
     levels: &'m [Rc<Level<S>>],
     layouts: &'m [Option<Loaded>],
     stores: &'m [Option<Rc<ViewStore>>],
+    /// The data of all the page's layouts, and where in them `layouts` starts.
+    all_layouts: &'m [Option<Loaded>],
+    start: usize,
 }
 
 impl<S> Clone for Chain<'_, S> {
@@ -267,8 +277,15 @@ impl<'m, S> Chain<'m, S> {
                 levels,
                 layouts,
                 stores,
+                all_layouts: self.all_layouts,
+                start: self.start + 1,
             },
         ))
+    }
+
+    /// The data of the layouts above the outermost level.
+    fn above(self) -> &'m [Option<Loaded>] {
+        &self.all_layouts[..self.start]
     }
 }
 
@@ -280,6 +297,7 @@ fn render_levels<S>(
     leaf: &mut dyn FnMut(&mut Ui),
     handoff: Option<Handoff<'_>>,
 ) {
+    let above = chain.above();
     let Some(((level, loaded, store), below_chain)) = chain.split_first() else {
         return leaf(ui);
     };
@@ -303,12 +321,24 @@ fn render_levels<S>(
                 uses_transitions: &layout.transitions,
                 transition: here.as_mut().map(|t| t as &mut dyn TransitionHandle),
             };
-            let mut data = loaded.data.borrow_mut();
-            (layout.view)(
-                ui,
-                outlet,
-                &ViewContext::new(state, frame, &mut **data, store),
-            );
+            // Borrowed mutably only if the view asks for it: else the views below can read it.
+            if layout.data_mut {
+                let mut data = loaded.data.borrow_mut();
+                let data = ViewData::Mut(&mut **data);
+                (layout.view)(
+                    ui,
+                    outlet,
+                    &ViewContext::new(state, frame, data, store, above),
+                );
+            } else {
+                let data = loaded.data.borrow();
+                let data = ViewData::Shared(&**data);
+                (layout.view)(
+                    ui,
+                    outlet,
+                    &ViewContext::new(state, frame, data, store, above),
+                );
+            }
         }
         _ => render_levels(ui, state, frame, below_chain, leaf, below),
     }
