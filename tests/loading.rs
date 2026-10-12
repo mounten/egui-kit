@@ -281,6 +281,37 @@ fn loads_run_concurrently() {
 }
 
 #[test]
+fn going_to_the_loading_url_keeps_the_navigation() {
+    let ctx = egui::Context::default();
+    let mut app = app("/");
+    frame(&ctx, &mut app);
+
+    // A view asking for the same navigation every frame, as when a query's value triggers it.
+    app.goto("/slow");
+    assert_eq!(loads(&ctx, &mut app), ["independent"]);
+    for _ in 0..3 {
+        assert_eq!(
+            act(&ctx, &mut app, |nav| nav.goto("/slow")),
+            Vec::<String>::new()
+        );
+    }
+    app.state().gate_open.set(true);
+    assert_eq!(loads(&ctx, &mut app), ["slow-layout"]);
+    assert_eq!(app.url(), Some("/slow"));
+
+    // Other options start over.
+    app.state().gate_open.set(false);
+    app.goto("/");
+    frame(&ctx, &mut app);
+    app.goto("/slow");
+    assert_eq!(loads(&ctx, &mut app), ["independent"]);
+    assert_eq!(
+        act(&ctx, &mut app, |nav| nav.replace("/slow")),
+        ["independent"]
+    );
+}
+
+#[test]
 fn preloaded_routes_are_used_by_the_navigation() {
     let ctx = egui::Context::default();
     let mut app = app("/");
