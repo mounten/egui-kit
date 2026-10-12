@@ -74,7 +74,8 @@
 //! # Caching
 //!
 //! A query runs the first time a view reads it, and its result is kept for as long as views keep
-//! reading it: it is dropped after a frame in which no view did. While it reruns (after an
+//! reading it: it is dropped after a frame in which no view did, or [a while
+//! later](Query::keep_unread). While it reruns (after an
 //! [invalidation](crate::extract::Nav::invalidate) or a [refresh](Remote::refresh)),
 //! [`QueryState::current`] still has the previous value. A query that [refetches
 //! periodically](Query::refetch_every) reruns the same way.
@@ -118,6 +119,15 @@ pub trait Query<S>: Clone + PartialEq + 'static {
     fn refetch_every(&self) -> Option<Duration> {
         None
     }
+
+    /// How long the result is kept once no view reads it, so that a view reading it again (after
+    /// switching tabs, or reopening a popup) finds it, and doesn't wait for a rerun. By default
+    /// it is dropped after the first frame in which no view read it.
+    ///
+    /// A query isn't polled while no view reads it: a run in progress continues once one does.
+    fn keep_unread(&self) -> Duration {
+        Duration::ZERO
+    }
 }
 
 /// An async mutation that views start with [`CommandHandle::run`].
@@ -153,6 +163,9 @@ struct QueryEntry {
     stale: bool,
     /// Whether a view read it during this frame.
     read: bool,
+    keep_unread: Duration,
+    /// When a view last read it, in egui's time.
+    read_at: f64,
 }
 
 /// The queries' cache and the commands in flight, owned by the app.
@@ -185,6 +198,8 @@ impl RemoteStore {
                     future: None,
                     stale: true,
                     read: false,
+                    keep_unread: query.keep_unread(),
+                    read_at: 0.0,
                 });
                 queries.len() - 1
             });
@@ -201,6 +216,7 @@ impl RemoteStore {
                 ctx.request_repaint_after_secs((due - now) as f32);
             }
         }
+        entry.read_at = now;
         if entry.stale {
             entry.stale = false;
             let future = query.clone().run(state.clone());
@@ -255,12 +271,14 @@ impl RemoteStore {
         }
     }
 
-    /// Drops the queries no view read during the frame.
-    pub(crate) fn end_frame(&self) {
+    /// Drops the queries no view read during the frame, once they were [kept](Query::keep_unread)
+    /// long enough.
+    pub(crate) fn end_frame(&self, ctx: &egui::Context) {
+        let now = ctx.input(|i| i.time);
         self.queries.borrow_mut().retain_mut(|entry| {
             let read = entry.read;
             entry.read = false;
-            read
+            read || now - entry.read_at < entry.keep_unread.as_secs_f64()
         });
     }
 
@@ -347,7 +365,7 @@ impl<S: 'static, D> FromView<S, D> for Remote<'_, S> {
 
 impl<'f, S: Clone + 'static> Remote<'f, S> {
     /// Reads `query`, running it if it isn't cached. Call it every frame you show the result:
-    /// a query no view reads during a frame is dropped.
+    /// a query no view reads during a frame is dropped (see [`Query::keep_unread`]).
     #[expect(
         clippy::needless_pass_by_value,
         reason = "`remote.query(SearchAuthors(prefix))` reads better than with a reference"

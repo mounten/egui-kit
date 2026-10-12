@@ -108,6 +108,23 @@ impl Query<AppState> for Inbox {
     }
 }
 
+/// Kept for 10 seconds without readers.
+#[derive(Clone, PartialEq)]
+struct Kept;
+
+impl Query<AppState> for Kept {
+    type Output = u32;
+
+    fn run(self, state: AppState) -> impl Future<Output = Result<u32, RouteError>> {
+        state.ran("kept");
+        ready(Ok(state.count.get()))
+    }
+
+    fn keep_unread(&self) -> Duration {
+        Duration::from_secs(10)
+    }
+}
+
 struct Increment {
     fail: bool,
 }
@@ -351,4 +368,45 @@ fn queries_refetch_periodically_while_read() {
     // The next run is due 5 seconds after the last one finished.
     assert_eq!(frame_at(11.9).0, NOTHING);
     assert_eq!(frame_at(12.0).0, ["inbox"]);
+}
+
+#[test]
+fn queries_can_be_kept_without_readers() {
+    let ctx = egui::Context::default();
+    let mut app = Router::new()
+        .page(
+            "/",
+            Page::new(
+                |_: &mut Ui, State(state): State<&AppState>, remote: Remote<'_, AppState>| {
+                    if state.show.get() {
+                        remote.query(Kept);
+                    }
+                },
+            ),
+        )
+        .with_state_and_history(AppState::default(), MemoryHistory::new("/"));
+    let state = app.state().clone();
+    let mut frame_at = |time: f64| {
+        let input = egui::RawInput {
+            time: Some(time),
+            ..Default::default()
+        };
+        let mut output = ctx.run_ui(input, |ui| app.ui(ui));
+        output.textures_delta.clear();
+        core::mem::take(&mut *state.runs.borrow_mut())
+    };
+
+    assert_eq!(frame_at(0.0), ["kept"]);
+    state.show.set(false);
+    assert_eq!(frame_at(1.0), NOTHING);
+    assert_eq!(frame_at(9.9), NOTHING);
+    state.show.set(true);
+    assert_eq!(frame_at(10.0), NOTHING, "still cached");
+
+    // Dropped 10 seconds after the last read.
+    state.show.set(false);
+    frame_at(11.0);
+    frame_at(20.0);
+    state.show.set(true);
+    assert_eq!(frame_at(21.0), ["kept"]);
 }
