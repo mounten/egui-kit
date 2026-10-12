@@ -81,7 +81,7 @@
 //! periodically](Query::refetch_every) reruns the same way.
 
 use core::any::{Any, TypeId};
-use core::cell::RefCell;
+use core::cell::{Cell, RefCell};
 use core::future::Future;
 use core::marker::PhantomData;
 use core::task::Poll;
@@ -156,6 +156,8 @@ struct QueryEntry {
     finished_at: Option<f64>,
     /// The last value it fetched.
     value: Option<Rc<dyn Any>>,
+    /// Identifies `value`.
+    version: u64,
     /// Whether the last run failed.
     error: Option<RouteError>,
     future: Option<QueryFuture>,
@@ -172,6 +174,8 @@ struct QueryEntry {
 #[derive(Default)]
 pub(crate) struct RemoteStore {
     queries: RefCell<Vec<QueryEntry>>,
+    /// The last version given to a value, so that versions are never reused.
+    version: Cell<u64>,
     /// Yield the keys to invalidate.
     commands: RefCell<Vec<LocalBoxFuture<Vec<String>>>>,
 }
@@ -194,6 +198,7 @@ impl RemoteStore {
                     refetch_every: query.refetch_every(),
                     finished_at: None,
                     value: None,
+                    version: 0,
                     error: None,
                     future: None,
                     stale: true,
@@ -236,6 +241,8 @@ impl RemoteStore {
             match result {
                 Ok(value) => {
                     entry.value = Some(value);
+                    self.version.set(self.version.get() + 1);
+                    entry.version = self.version.get();
                     entry.error = None;
                 }
                 Err(error) => entry.error = Some(error),
@@ -246,6 +253,7 @@ impl RemoteStore {
                 .value
                 .clone()
                 .map(|value| value.downcast().expect("stored by type")),
+            version: entry.version,
             error: entry.error.clone(),
             loading: entry.future.is_some(),
         }
@@ -301,6 +309,7 @@ impl RemoteStore {
 /// A query's result, as seen by a view: see [`Remote::query`].
 pub struct QueryState<T> {
     value: Option<Rc<T>>,
+    version: u64,
     error: Option<RouteError>,
     loading: bool,
 }
@@ -310,6 +319,34 @@ impl<T> QueryState<T> {
     /// previous value.
     pub fn current(&self) -> Option<&T> {
         self.value.as_deref()
+    }
+
+    /// The current value, shared with the cache: cheap to keep beyond the frame.
+    pub fn rc(&self) -> Option<Rc<T>> {
+        self.value.clone()
+    }
+
+    /// Identifies the [current](Self::current) value: it changes whenever the query fetched a
+    /// new one, so that a view can rebuild what it derives from the value only then. `0` while
+    /// there is no value.
+    ///
+    /// ```
+    /// # use egui_kit::remote::QueryState;
+    /// #[derive(Default)]
+    /// struct Calendar {
+    ///     version: u64,
+    ///     items: Vec<String>,
+    /// }
+    ///
+    /// fn update(calendar: &mut Calendar, events: &QueryState<Vec<String>>) {
+    ///     if events.version() != calendar.version {
+    ///         calendar.version = events.version();
+    ///         calendar.items = events.current().cloned().unwrap_or_default();
+    ///     }
+    /// }
+    /// ```
+    pub fn version(&self) -> u64 {
+        self.version
     }
 
     /// Why the last run failed.
@@ -328,6 +365,7 @@ impl<T: fmt::Debug> fmt::Debug for QueryState<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("QueryState")
             .field("current", &self.value)
+            .field("version", &self.version)
             .field("error", &self.error)
             .field("loading", &self.loading)
             .finish()
