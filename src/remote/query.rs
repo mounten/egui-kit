@@ -4,11 +4,12 @@ use core::any::{Any, TypeId};
 use core::cell::{Cell, Ref, RefCell};
 use core::fmt;
 use core::future::Future;
+use core::hash::{BuildHasher as _, Hash};
 use core::time::Duration;
+use std::hash::RandomState;
 use std::rc::Rc;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 
-use egui::{AsId, Id};
 use web_time::Instant;
 
 use super::runtime::{self, Abort, BoxFuture, MaybeSend};
@@ -147,10 +148,14 @@ impl<T: MaybeSend + 'static, E: MaybeSend + 'static> Query<T, E> {
     /// query with a key fetches with its function, the others use its value.
     ///
     /// The key identifies the data, so it must contain everything the fetch uses, like
-    /// `("user", id)`. See [Keys, dependencies and refreshes](crate::remote#keys-dependencies-and-refreshes).
+    /// `("user", id)`. It is only hashed, so it may contain secrets: pass them as they are, not
+    /// as an [`egui::Id`], which keeps their `Debug` text in debug builds. See
+    /// [Keys, dependencies and refreshes](crate::remote#keys-dependencies-and-refreshes).
     #[must_use]
-    pub fn key(mut self, key: impl AsId) -> Self {
-        let id = (TypeId::of::<(T, E)>(), Id::new(key));
+    pub fn key(mut self, key: impl Hash) -> Self {
+        /// Hashes the keys, the same way for the whole process.
+        static HASHER: LazyLock<RandomState> = LazyLock::new(RandomState::new);
+        let id = (TypeId::of::<(T, E)>(), HASHER.hash_one(key));
         let shared = with_registry(|registry| {
             if let Some(entry) = registry.cache.get(&id) {
                 return Rc::clone(entry).as_any().downcast().ok();
