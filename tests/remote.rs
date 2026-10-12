@@ -250,6 +250,30 @@ fn invalidation_reruns_queries_keeping_the_previous_value() {
     assert_eq!(frame(&ctx, &mut app), NOTHING);
     assert_eq!(seen(&app), ["Some(5)"]);
 
+    // A new value has a new version, and is shared with the cache.
+    let versions = Rc::new(RefCell::new(Vec::new()));
+    let read_version = |app: &RouterApp<AppState>| {
+        let versions = Rc::clone(&versions);
+        act(app, move |remote, _| {
+            let count = remote.query(Count);
+            let rc = count.rc().unwrap();
+            assert!(core::ptr::eq(Rc::as_ptr(&rc), count.current().unwrap()));
+            versions.borrow_mut().push(count.version());
+        });
+    };
+    read_version(&app);
+    frame(&ctx, &mut app);
+    read_version(&app);
+    frame(&ctx, &mut app);
+    app.invalidate("count");
+    read_version(&app);
+    frame(&ctx, &mut app);
+    let versions = versions.borrow();
+    assert!(
+        versions[0] > 0 && versions[0] == versions[1] && versions[2] > versions[1],
+        "{versions:?}"
+    );
+
     // Other keys leave it alone.
     app.invalidate("other");
     assert_eq!(frame(&ctx, &mut app), NOTHING);
