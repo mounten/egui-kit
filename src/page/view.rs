@@ -80,6 +80,20 @@ impl<'a, S> ViewContext<'a, S> {
         self.store
     }
 
+    /// Lets `f` read the view's data, before an extractor takes it.
+    pub(crate) fn peek_data<R>(&self, f: impl FnOnce(&dyn Any) -> R) -> R {
+        let data = self
+            .data
+            .take()
+            .expect("egui-kit: the view's data was already extracted (this is a bug)");
+        let result = f(match &data {
+            ViewData::Mut(data) => &**data,
+            ViewData::Shared(data) => *data,
+        });
+        self.data.set(Some(data));
+        result
+    }
+
     /// Takes the view's data; it can only be extracted once.
     pub(crate) fn take_data(&self) -> &'a (dyn Any + 'static) {
         match self.take() {
@@ -174,6 +188,7 @@ macro_rules! impl_views {
                 fn call_inner<$($ty),*>(f: impl Fn(&mut Ui, $($ty),*), ui: &mut Ui, $($ty: $ty),*) {
                     f(ui, $($ty),*)
                 }
+                $($ty::prepare(cx);)*
                 $(let $ty = $ty::from_view(cx);)*
                 call_inner(self, ui, $($ty),*)
             }
@@ -200,6 +215,7 @@ macro_rules! impl_views {
                 ) {
                     f(ui, outlet, $($ty),*)
                 }
+                $($ty::prepare(cx);)*
                 $(let $ty = $ty::from_view(cx);)*
                 call_inner(self, ui, outlet, $($ty),*)
             }

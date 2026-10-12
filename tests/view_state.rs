@@ -4,7 +4,9 @@ use core::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use egui::Ui;
-use egui_kit::extract::{Nav, PageState, PersistentState, Snapshot, State};
+use egui_kit::extract::{
+    Nav, PageState, PageStateFrom, PersistentState, Snapshot, SnapshotFrom, State,
+};
 use egui_kit::page::{Layout, Outlet, Page};
 use egui_kit::{GotoOptions, MemoryHistory, Rejection, Router, RouterApp};
 use serde::{Deserialize, Serialize};
@@ -73,6 +75,33 @@ fn blog_layout(
     outlet.show(ui);
 }
 
+/// The load it was made from.
+struct Initial(u32);
+
+impl From<&u32> for Initial {
+    fn from(load: &u32) -> Self {
+        Self(*load)
+    }
+}
+
+/// Takes the data first, so the state is made before it's extracted.
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "extractors are passed by value"
+)]
+fn from_data(
+    _: &mut Ui,
+    load: &mut u32,
+    page: PageStateFrom<'_, Initial>,
+    snapshot: SnapshotFrom<'_, Initial>,
+    State(state): State<&AppState>,
+) {
+    state.push(format!(
+        "load#{load}:page={}:snapshot={}",
+        page.0, snapshot.0
+    ));
+}
+
 fn page(name: &'static str) -> Page<AppState> {
     Page::new(move |_: &mut Ui, State(state): State<&AppState>| state.push(name))
 }
@@ -90,6 +119,7 @@ fn app(ctx_url: &str) -> RouterApp<AppState> {
         ))
         .page("/", page("home"))
         .page("/form", Page::with_load(count_load, form))
+        .page("/from-data", Page::with_load(count_load, from_data))
         .page(
             "/visits",
             Page::new(
@@ -225,4 +255,26 @@ fn a_view_extracts_each_page_state_type_once() {
 fn frame_unit(ctx: &egui::Context, app: &mut RouterApp<()>) {
     let mut output = ctx.run_ui(Default::default(), |ui| app.ui(ui));
     output.textures_delta.clear();
+}
+
+#[test]
+fn view_state_can_start_from_the_data() {
+    let ctx = egui::Context::default();
+    let mut app = app("/from-data");
+    assert_eq!(frame(&ctx, &mut app), ["load#1:page=1:snapshot=1"]);
+
+    // Made once: reloads keep it.
+    app.invalidate_all();
+    frame(&ctx, &mut app);
+    assert_eq!(frame(&ctx, &mut app), ["load#2:page=1:snapshot=1"]);
+
+    // A new visit starts over, and back/forward brings the snapshot back.
+    app.goto("/");
+    frame(&ctx, &mut app);
+    app.goto("/from-data");
+    assert_eq!(frame(&ctx, &mut app), ["load#3:page=3:snapshot=3"]);
+    app.back();
+    frame(&ctx, &mut app);
+    app.back();
+    assert_eq!(frame(&ctx, &mut app), ["load#4:page=4:snapshot=1"]);
 }
