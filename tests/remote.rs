@@ -110,6 +110,24 @@ fn keyed_queries_share_one_fetch_and_cache_the_value() {
 }
 
 #[test]
+fn keys_need_not_be_debug() {
+    /// A session token, which shouldn't be printed.
+    #[derive(Hash)]
+    struct Token(&'static str);
+
+    let fetches = Arc::default();
+    let hour = Duration::from_secs(3600);
+    let a = counting(&fetches, false).key(("todos", Token("alice")));
+    wait_until(|| data(&a).is_some());
+    let b = counting(&fetches, false)
+        .key(("todos", Token("alice")))
+        .stale_after(hour);
+    assert_eq!(data(&b), Some(1), "the same key");
+    let c = counting(&fetches, false).key(("todos", Token("bob")));
+    assert_eq!(data(&c), None, "another key");
+}
+
+#[test]
 fn new_queries_refetch_stale_cached_values() {
     let fetches = Arc::default();
     let a = counting(&fetches, false).key("stale");

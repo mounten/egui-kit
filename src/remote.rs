@@ -128,7 +128,8 @@
 //! error types) share one state: they fetch once for all of them, and a query created later
 //! finds the value right away, e.g. when a page is opened again. So the key must contain
 //! everything the fetch depends on: `("user", id)`, not `"user"`. A query without a key has a
-//! value of its own, which is dropped with it.
+//! value of its own, which is dropped with it. The key is only hashed, never kept or printed, so
+//! it may contain secrets, like the session token of per-user data: `("todos", &token)`.
 //!
 //! A **dependency** is a name for some data on the backend, like `"todos"` or `"users"`. It is
 //! the same kind of name as a load's [`Page::depends`]: a single invalidation reruns the loads
@@ -210,7 +211,6 @@ use std::collections::HashMap;
 use std::rc::{Rc, Weak};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
-use egui::Id;
 use web_time::Instant;
 
 pub use command::{Command, command};
@@ -239,7 +239,7 @@ struct Registry {
     /// How many entries were left after the dropped ones were last pruned.
     pruned_len: usize,
     /// The state of keyed queries, by value type and key.
-    cache: HashMap<(TypeId, Id), Rc<dyn Entry>>,
+    cache: HashMap<(TypeId, u64), Rc<dyn Entry>>,
     /// The app's context, to wake it up when a query or command finished. Shared with them, so
     /// that the ones started before it was known wake it up too.
     ctx: Arc<Mutex<Option<egui::Context>>>,
