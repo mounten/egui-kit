@@ -228,6 +228,15 @@ fn layout_state_lives_as_long_as_the_layout() {
 }
 
 #[test]
+fn persistent_state_outside_of_views() {
+    let ctx = egui::Context::default();
+    PersistentState::<Visits>::set(&ctx, Visits(41));
+    let mut app = app("/visits");
+    assert_eq!(frame(&ctx, &mut app), ["visits:42"]);
+    assert_eq!(PersistentState::<Visits>::get(&ctx).0, 42);
+}
+
+#[test]
 fn persistent_state_outlives_the_app() {
     let ctx = egui::Context::default();
     let mut app = app("/visits");
