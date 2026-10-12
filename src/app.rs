@@ -200,7 +200,7 @@ impl<S: Clone + 'static> RouterApp<S> {
         #[cfg(feature = "remote")]
         let _runtime = crate::remote::enter();
         #[cfg(feature = "remote")]
-        crate::remote::begin_frame(&ctx);
+        crate::remote::set_context(&ctx);
 
         #[cfg(not(target_arch = "wasm32"))]
         self.handle_back_forward_input(ui);

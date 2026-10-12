@@ -265,3 +265,22 @@ fn unused_cache_entries_expire() {
     let query = counting(&fetches, false).key("expiring");
     assert_eq!(data(&query), None, "dropped from the cache");
 }
+
+#[test]
+fn work_started_before_the_context_is_set_wakes_the_app() {
+    let ctx = egui::Context::default();
+    let woken = Arc::new(AtomicBool::new(false));
+    ctx.set_request_repaint_callback({
+        let woken = Arc::clone(&woken);
+        move |_| woken.store(true, Ordering::SeqCst)
+    });
+    let command: Command<(), String> = remote::command();
+    let (open, mut gate) = watch::channel(false);
+    command.run(async move {
+        gate.wait_for(|open| *open).await.ok();
+        Ok(())
+    });
+    remote::set_context(&ctx);
+    open.send(true).unwrap();
+    wait_until(|| woken.load(Ordering::SeqCst));
+}

@@ -178,8 +178,11 @@
 //! enters it too, so that hooks and loads can use Tokio-based clients like `reqwest`. On the
 //! web, futures run on the browser's event loop and needn't be `Send`.
 //!
-//! A query or command wakes egui up when it finishes, once a [`RouterApp`] drew a frame on
-//! this thread. Its result is picked up when it is read.
+//! A query or command wakes egui up when it finishes, once the app's context is known on this
+//! thread: a [`RouterApp`] sets it at each frame, and [`set_context`] before the router's first
+//! frame (e.g. for a command that checks a stored session before the router is built) or in an
+//! app without a router. Work started earlier wakes egui up too, if the context is known by the
+//! time it finishes. Its result is picked up when it is read.
 //!
 //! # Caching
 //!
@@ -237,8 +240,9 @@ struct Registry {
     pruned_len: usize,
     /// The state of keyed queries, by value type and key.
     cache: HashMap<(TypeId, Id), Rc<dyn Entry>>,
-    /// The app's context, to wake it up when a query or command finished.
-    ctx: Option<egui::Context>,
+    /// The app's context, to wake it up when a query or command finished. Shared with them, so
+    /// that the ones started before it was known wake it up too.
+    ctx: Arc<Mutex<Option<egui::Context>>>,
     /// Keys to invalidate, from [`invalidate`] and from the commands that succeeded.
     invalidated: Arc<Mutex<Vec<String>>>,
 }
@@ -260,37 +264,61 @@ impl Registry {
 }
 
 fn context() -> Option<egui::Context> {
-    with_registry(|registry| registry.ctx.clone())
+    with_registry(|registry| lock(&registry.ctx).clone())
+}
+
+/// The app's context, as it will be when a query or command finishes.
+fn shared_context() -> Arc<Mutex<Option<egui::Context>>> {
+    with_registry(|registry| Arc::clone(&registry.ctx))
+}
+
+/// Wakes the app up, if its context is known.
+fn request_repaint(ctx: &Mutex<Option<egui::Context>>) {
+    let ctx = lock(ctx).clone();
+    if let Some(ctx) = ctx {
+        ctx.request_repaint();
+    }
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
-/// Pushes `keys` to the invalidations and wakes the app up.
-fn push_invalidated(
-    invalidated: &Mutex<Vec<String>>,
-    ctx: Option<&egui::Context>,
-    keys: impl IntoIterator<Item = String>,
-) {
-    lock(invalidated).extend(keys);
-    if let Some(ctx) = ctx {
-        ctx.request_repaint();
-    }
-}
-
 /// Reruns the loads and queries that depend on `key`, like
 /// [`Nav::invalidate`](crate::extract::Nav::invalidate), from anywhere on the UI thread. The
 /// router applies it at its next frame.
 pub fn invalidate(key: impl Into<String>) {
-    let (invalidated, ctx) =
-        with_registry(|registry| (Arc::clone(&registry.invalidated), registry.ctx.clone()));
-    push_invalidated(&invalidated, ctx.as_ref(), [key.into()]);
+    let invalidated = with_registry(|registry| Arc::clone(&registry.invalidated));
+    lock(&invalidated).push(key.into());
+    request_repaint(&shared_context());
 }
 
-/// Remembers the app's context, at the start of its frame.
-pub(crate) fn begin_frame(ctx: &egui::Context) {
-    with_registry(|registry| registry.ctx = Some(ctx.clone()));
+/// Sets the app's context on this thread, so that queries and commands wake it up when they
+/// finish, including the ones in progress.
+///
+/// A [`RouterApp`](crate::RouterApp) sets it at the start of each frame. Call it yourself when
+/// queries or commands run before the router's first frame, or in an app without a router,
+/// e.g. in the app's constructor, with eframe's `CreationContext::egui_ctx`:
+///
+/// ```
+/// use egui_kit::remote::{self, Command};
+///
+/// struct Shell {
+///     check_session: Command<bool, String>,
+/// }
+///
+/// impl Shell {
+///     fn new(ctx: &egui::Context) -> Self {
+///         // Without it, a reactive app would show its spinner until the mouse moves.
+///         remote::set_context(ctx);
+///         let check_session = remote::command();
+///         check_session.run(async { Ok(true) });
+///         Self { check_session }
+///     }
+/// }
+/// ```
+pub fn set_context(ctx: &egui::Context) {
+    *lock(&shared_context()) = Some(ctx.clone());
 }
 
 /// The keys [invalidated](invalidate) since the last call.
