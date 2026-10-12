@@ -223,7 +223,7 @@ impl<S: Clone + 'static> RouterApp<S> {
             self.transition = None;
         }
 
-        self.remote.end_frame();
+        self.remote.end_frame(&ctx);
 
         let actions = core::mem::take(&mut self.nav.actions);
         if !actions.is_empty() {
