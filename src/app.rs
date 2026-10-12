@@ -272,6 +272,10 @@ impl<S: Clone + 'static> RouterApp<S> {
             NavAction::Preload(url) => self.preload(&url),
             NavAction::PushState(url, state) => self.shallow(url, state, true),
             NavAction::ReplaceState(url, state) => self.shallow(url, state, false),
+            NavAction::ReplaceUrl(url) => {
+                let state = self.mounted.as_ref().and_then(|m| m.history_state.clone());
+                self.shallow(url, state, false);
+            }
             NavAction::ConfirmNavigation => self.confirm_blocked(),
             NavAction::CancelNavigation => self.blocked = None,
         }

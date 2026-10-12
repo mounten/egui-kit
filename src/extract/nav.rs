@@ -20,6 +20,8 @@ pub(crate) enum NavAction {
     /// Shallow routing: a new or replaced history entry without a navigation.
     PushState(String, Option<Rc<dyn Any>>),
     ReplaceState(String, Option<Rc<dyn Any>>),
+    /// Shallow routing that keeps the entry's state.
+    ReplaceUrl(String),
     ConfirmNavigation,
     CancelNavigation,
 }
@@ -227,6 +229,13 @@ impl Nav<'_> {
     /// Like [`Nav::push_state`], but replaces the state (and url) of the current entry.
     pub fn replace_state<T: Any>(&self, url: impl Into<String>, state: T) {
         self.push(NavAction::ReplaceState(url.into(), Some(Rc::new(state))));
+    }
+
+    /// Changes the url of the current entry, keeping its state: to keep the address in step with
+    /// the page (another day in a calendar, another tab) without a navigation. Like
+    /// [`Nav::replace_state`], the url should also work on its own.
+    pub fn replace_url(&self, url: impl Into<String>) {
+        self.push(NavAction::ReplaceUrl(url.into()));
     }
 
     /// Removes the state of the current entry, keeping its url.

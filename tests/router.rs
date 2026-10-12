@@ -316,6 +316,15 @@ fn shallow_routing() {
     act(&ctx, &mut app, |nav| nav.clear_history_state());
     assert_eq!(frame(&ctx, &mut app), ["root-layout", "photos:/photos:-"]);
     assert_eq!(app.url(), Some("/photos"));
+
+    // Only the url.
+    act(&ctx, &mut app, |nav| nav.replace_state("", 8u32));
+    act(&ctx, &mut app, |nav| nav.replace_url("/photos?sort=new"));
+    assert_eq!(
+        frame(&ctx, &mut app),
+        ["root-layout", "photos:/photos?sort=new:8"]
+    );
+    assert_eq!(loads(), 3);
 }
 
 #[test]
