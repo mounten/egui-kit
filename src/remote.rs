@@ -90,6 +90,8 @@ use std::collections::HashMap;
 use std::fmt;
 use std::rc::Rc;
 
+use egui::{AsId, Id};
+
 use crate::error::RouteError;
 use crate::exec;
 use crate::extract::{FromView, ViewStore};
@@ -424,13 +426,51 @@ impl<'f, S: Clone + 'static> Remote<'f, S> {
     ///
     /// Its state belongs to the view, for as long as its page (or layout) is shown. A command
     /// still running when the page is left completes and refreshes what it changed, but its
-    /// output is dropped.
+    /// output is dropped. The view has one state per command type; see
+    /// [`command_keyed`](Self::command_keyed) for more.
     pub fn command<C: Command<S>>(&self) -> CommandHandle<'f, S, C> {
+        self.command_with_id(Id::NULL)
+    }
+
+    /// Like [`command`](Self::command), with a state of its own for each `key`: for parts of a
+    /// view that run the same command type independently, like two dialogs or the rows of a
+    /// list.
+    ///
+    /// ```
+    /// # use egui_kit::extract::Remote;
+    /// # use egui_kit::remote::Command;
+    /// # use egui_kit::RouteError;
+    /// # #[derive(Clone)]
+    /// # struct AppState;
+    /// struct Delete(u32);
+    ///
+    /// impl Command<AppState> for Delete {
+    ///     type Output = ();
+    ///
+    ///     async fn run(self, _state: AppState) -> Result<(), RouteError> {
+    ///         Ok(())
+    ///     }
+    /// }
+    ///
+    /// fn rows(ui: &mut egui::Ui, ids: &[u32], remote: Remote<'_, AppState>) {
+    ///     for &id in ids {
+    ///         let delete = remote.command_keyed::<Delete>(id);
+    ///         if ui.add_enabled(!delete.is_pending(), egui::Button::new("Delete")).clicked() {
+    ///             delete.run(Delete(id));
+    ///         }
+    ///     }
+    /// }
+    /// ```
+    pub fn command_keyed<C: Command<S>>(&self, key: impl AsId) -> CommandHandle<'f, S, C> {
+        self.command_with_id(Id::new(key))
+    }
+
+    fn command_with_id<C: Command<S>>(&self, id: Id) -> CommandHandle<'f, S, C> {
         let slot = Rc::clone(
             self.store
                 .commands
                 .borrow_mut()
-                .entry(TypeId::of::<C>())
+                .entry((TypeId::of::<C>(), id))
                 .or_insert_with(|| Rc::new(RefCell::new(CommandSlot::<C::Output>::default()))),
         );
         CommandHandle {
@@ -460,8 +500,8 @@ impl<T> Default for CommandSlot<T> {
     }
 }
 
-/// Commands' state, per view, by command type.
-pub(crate) type CommandSlots = RefCell<HashMap<TypeId, Rc<dyn Any>>>;
+/// Commands' state, per view, by command type and key ([`Id::NULL`] without one).
+pub(crate) type CommandSlots = RefCell<HashMap<(TypeId, Id), Rc<dyn Any>>>;
 
 /// A view's handle to the command `C`, from [`Remote::command`].
 pub struct CommandHandle<'f, S, C: Command<S>> {

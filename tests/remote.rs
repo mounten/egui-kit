@@ -450,3 +450,32 @@ fn queries_can_be_kept_without_readers() {
     state.show.set(true);
     assert_eq!(frame_at(21.0), ["kept"]);
 }
+
+#[test]
+fn keyed_commands_have_their_own_state() {
+    let ctx = egui::Context::default();
+    let mut app = app();
+    frame(&ctx, &mut app);
+
+    app.state().gate.set(false);
+    act(&app, |remote, _| {
+        remote
+            .command_keyed::<Increment>("a")
+            .run(Increment { fail: true });
+    });
+    frame(&ctx, &mut app);
+    act(&app, |remote, _| {
+        assert!(remote.command_keyed::<Increment>("a").is_pending());
+        assert!(!remote.command_keyed::<Increment>("b").is_pending());
+        assert!(!remote.command::<Increment>().is_pending());
+    });
+    frame(&ctx, &mut app);
+
+    app.state().gate.set(true);
+    frame(&ctx, &mut app);
+    act(&app, |remote, _| {
+        assert!(remote.command_keyed::<Increment>("a").error().is_some());
+        assert!(remote.command_keyed::<Increment>("b").error().is_none());
+    });
+    frame(&ctx, &mut app);
+}
