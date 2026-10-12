@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0](https://github.com/mounten/egui-kit/compare/v0.2.0...v0.3.0) - 2026-10-12
+
+### Added
+
+- *(remote)* [**breaking**] replace remote functions with owned `Query` and `Command` handles ([#30](https://github.com/mounten/egui-kit/pull/30))
+- *(router)* add `RouterApp::matches` to resolve urls ([#26](https://github.com/mounten/egui-kit/pull/26))
+- *(history)* implement `History` for boxed histories ([#25](https://github.com/mounten/egui-kit/pull/25))
+- *(extract)* add `Nav::replace_url` ([#23](https://github.com/mounten/egui-kit/pull/23))
+- *(extract)* read and write `PersistentState` outside of views ([#22](https://github.com/mounten/egui-kit/pull/22))
+- *(extract)* add `PageStateFrom` and `SnapshotFrom` ([#21](https://github.com/mounten/egui-kit/pull/21))
+- *(transition)* [**breaking**] tell effects which navigation they animate ([#20](https://github.com/mounten/egui-kit/pull/20))
+- *(extract)* make `Nav::follow` public ([#18](https://github.com/mounten/egui-kit/pull/18))
+- *(extract)* add `LayoutData` to read a layout's data in views ([#17](https://github.com/mounten/egui-kit/pull/17))
+- *(remote)* run futures like commands, from views or anywhere ([#16](https://github.com/mounten/egui-kit/pull/16))
+- *(remote)* add keyed command handles ([#15](https://github.com/mounten/egui-kit/pull/15))
+- *(remote)* add `CommandHandle::take_error` and `take_result` ([#14](https://github.com/mounten/egui-kit/pull/14))
+- *(remote)* add `QueryState::version` and `QueryState::rc` ([#13](https://github.com/mounten/egui-kit/pull/13))
+- *(remote)* keep unread queries for a while ([#12](https://github.com/mounten/egui-kit/pull/12))
+- *(remote)* refetch queries periodically ([#11](https://github.com/mounten/egui-kit/pull/11))
+- *(task)* expose the executor to poll futures outside the router ([#10](https://github.com/mounten/egui-kit/pull/10))
+
+### Documentation
+
+- document redirects in the history, goto to the current url and query cancellation ([#27](https://github.com/mounten/egui-kit/pull/27))
+- explain how to use Tokio-based clients natively ([#9](https://github.com/mounten/egui-kit/pull/9))
+
+### Fixed
+
+- *(extract)* make `Nav::is_active` follow shallow routing ([#24](https://github.com/mounten/egui-kit/pull/24))
+- *(transition)* make the outgoing page non-interactive ([#19](https://github.com/mounten/egui-kit/pull/19))
+- *(router)* don't add a 404 fallback for merged routers ([#8](https://github.com/mounten/egui-kit/pull/8))
+- *(navigation)* keep a pending navigation when asked to go to its url again ([#7](https://github.com/mounten/egui-kit/pull/7))
+
 ## [0.2.0](https://github.com/mounten/egui-kit/compare/v0.1.0...v0.2.0) - 2026-10-11
 
 ### Added
