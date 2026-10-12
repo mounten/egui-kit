@@ -1,51 +1,33 @@
 //! Queries and commands, SvelteKit's `*.remote.ts`: data and mutations that aren't tied to a
-//! route. Views use them through the `Remote` extractor.
+//! route. They are plain values: the post count lives in the app state, the command that
+//! publishes a post in the admin page's state.
 
 use core::time::Duration;
 
-use egui_kit::RouteError;
-use egui_kit::remote::{Command, Query};
+use egui_kit::remote::{self, Query};
 
-use crate::state::{AppState, POSTS};
+use crate::state::{Db, POSTS};
 use crate::util::sleep;
 
-/// How many posts there are, for the top bar and the admin page. Reruns when the posts change.
-#[derive(Clone, PartialEq, Eq)]
-pub struct PostCount;
-
-impl Query<AppState> for PostCount {
-    type Output = usize;
-
-    async fn run(self, state: AppState) -> Result<usize, RouteError> {
-        sleep(Duration::from_millis(200)).await;
-        Ok(state.db.posts().len())
-    }
-
-    fn depends(&self) -> Vec<String> {
-        vec![POSTS.into()]
-    }
+/// How many posts there are, for the top bar and the admin page. Refetches when the posts
+/// change.
+pub fn post_count(db: &Db) -> Query<usize, String> {
+    let db = db.clone();
+    remote::query(move || {
+        let db = db.clone();
+        async move {
+            sleep(Duration::from_millis(200)).await;
+            Ok(db.posts().len())
+        }
+    })
+    .key("post_count")
+    .depends(POSTS)
 }
 
 /// Publishes a post and returns its slug.
-pub struct Publish {
-    pub title: String,
-    pub body: String,
-}
-
-impl Command<AppState> for Publish {
-    type Output = String;
-
-    async fn run(self, state: AppState) -> Result<String, RouteError> {
-        sleep(Duration::from_millis(500)).await;
-        let author_id = 1;
-        state
-            .db
-            .publish(&self.title, &self.body, author_id)
-            .ok_or_else(|| RouteError::new(409, "there is a post with that title already"))
-    }
-
-    /// The blog sidebar, the post list, `PostCount`…
-    fn refreshes(&self) -> Vec<String> {
-        vec![POSTS.into()]
-    }
+pub async fn publish(db: Db, title: String, body: String) -> Result<String, String> {
+    sleep(Duration::from_millis(500)).await;
+    let author_id = 1;
+    db.publish(&title, &body, author_id)
+        .ok_or_else(|| "there is a post with that title already".to_owned())
 }

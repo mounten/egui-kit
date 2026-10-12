@@ -203,12 +203,13 @@ impl Nav<'_> {
     }
 
     /// Reruns the loads of the current page that [depend](crate::page::Page::depends) on `key`, and
-    /// the loads below them that use [`Parent`](crate::extract::Parent).
+    /// the loads below them that use [`Parent`](crate::extract::Parent). Queries that depend on
+    /// it refetch too.
     pub fn invalidate(&self, key: impl Into<String>) {
         self.push(NavAction::Invalidate(Invalidation::Keys(vec![key.into()])));
     }
 
-    /// Reruns all loads of the current page.
+    /// Reruns all loads of the current page, and refetches all queries.
     pub fn invalidate_all(&self) {
         self.push(NavAction::Invalidate(Invalidation::All));
     }

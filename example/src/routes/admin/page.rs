@@ -4,24 +4,34 @@
 //! The draft is `PageState`: the user's input, separate from the loaded data, so it survives
 //! the page's reloads.
 //!
-//! Publishing is a `Command` (SvelteKit's remote `command`): it runs in the background while the
-//! view shows that it's pending, and refreshes everything that depends on the posts once done,
-//! including the `PostCount` query shown here and in the top bar.
+//! Publishing is a `Command` (SvelteKit's remote `command`), kept in the draft: it runs in the
+//! background while the view shows that it's pending, and refreshes everything that depends on
+//! the posts once done, including the post count query shown here and in the top bar.
 
 use egui_kit::Rejection;
-use egui_kit::extract::{Nav, PageState, Remote, State};
+use egui_kit::extract::{Nav, PageState, State};
+use egui_kit::remote::{self, Command, QueryState};
 
-use crate::remote::{PostCount, Publish};
-use crate::state::{AppState, Session};
+use crate::state::{AppState, POSTS, Session};
 
 pub struct Data {
     user: String,
 }
 
-#[derive(Default)]
 pub struct Draft {
     title: String,
     body: String,
+    publish: Command<String, String>,
+}
+
+impl Default for Draft {
+    fn default() -> Self {
+        Self {
+            title: String::new(),
+            body: String::new(),
+            publish: remote::command().refreshes(POSTS),
+        }
+    }
 }
 
 pub async fn load(State(session): State<Session>) -> Result<Data, Rejection> {
@@ -35,19 +45,20 @@ pub fn view(
     ui: &mut egui::Ui,
     data: &Data,
     mut draft: PageState<'_, Draft>,
-    State(session): State<&Session>,
-    remote: Remote<'_, AppState>,
+    State(state): State<&AppState>,
     nav: Nav<'_>,
 ) {
+    let session: &Session = &state.session;
     ui.heading("Admin");
     ui.horizontal(|ui| {
         ui.label(format!("Welcome, {}!", data.user));
-        let posts = remote.query(PostCount);
-        match posts.current() {
-            Some(count) => ui.label(format!("There are {count} posts.")),
-            None => ui.label("Counting posts…"),
+        let posts = &state.post_count;
+        match posts.state() {
+            QueryState::Loading => ui.label("Counting posts…"),
+            QueryState::Ready(count) => ui.label(format!("There are {count} posts.")),
+            QueryState::Failed(error) => ui.label(format!("Counting failed: {error}")),
         };
-        if posts.is_loading() {
+        if posts.is_fetching() {
             ui.spinner();
         }
     });
@@ -58,8 +69,7 @@ pub fn view(
 
     ui.separator();
     ui.strong("New post");
-    let publish = remote.command::<Publish>();
-    let pending = publish.is_pending();
+    let pending = draft.publish.is_pending();
     ui.add_enabled_ui(!pending, |ui| {
         ui.add(egui::TextEdit::singleline(&mut draft.title).hint_text("Title"));
         ui.add(egui::TextEdit::multiline(&mut draft.body).hint_text("Write something…"));
@@ -70,21 +80,22 @@ pub fn view(
             .add_enabled(can_publish, egui::Button::new("Publish"))
             .clicked()
         {
-            publish.run(Publish {
-                title: draft.title.trim().to_owned(),
-                body: draft.body.trim().to_owned(),
-            });
+            draft.publish.run(crate::remote::publish(
+                state.db.clone(),
+                draft.title.trim().to_owned(),
+                draft.body.trim().to_owned(),
+            ));
         }
         if pending {
             ui.spinner();
             ui.weak("Publishing…");
         }
     });
-    if let Some(error) = publish.error() {
-        ui.colored_label(ui.visuals().error_fg_color, error.message);
+    if let Some(error) = draft.publish.error() {
+        ui.colored_label(ui.visuals().error_fg_color, &*error);
     }
     // The command already refreshed what depends on the posts.
-    if let Some(slug) = publish.take_output() {
+    if let Some(Ok(slug)) = draft.publish.take_result() {
         *draft = Draft::default();
         nav.goto(format!("/blog/{slug}"));
     }

@@ -1,761 +1,321 @@
-//! Queries and commands: data and mutations that aren't tied to a route, inspired by SvelteKit's
-//! [remote functions](https://svelte.dev/docs/kit/remote-functions).
+//! Queries and commands: async data and mutations, as easy to start as `tokio::spawn`, inspired
+//! by SvelteKit's [remote functions](https://svelte.dev/docs/kit/remote-functions) and `TanStack`
+//! Query.
 //!
 //! A route's `load` fetches what its page needs before it is shown. Some data doesn't belong to
 //! a route, though: a badge in a layout, an autocomplete, a count that several pages show. And
 //! changing data is often async too (a `POST` to a backend), which a view can't `await`.
 //!
-//! - A [`Query`] is async data that any view can read with [`Remote::query`]. The value is the
-//!   query's input, and also its cache key: views reading equal queries share one result.
-//! - A [`Command`] is an async mutation, started from a view with [`CommandHandle::run`]. Its
-//!   state (pending, output, error) belongs to the view, and when it succeeds it
-//!   [refreshes](Command::refreshes) the loads and queries that depend on what it changed.
-//! - [`Remote::run`] runs a future like a command, without defining one, and a [`Spawner`] does
-//!   so from anywhere, even outside of views.
+//! - A [`Query`] is async data: it fetches on its first read, and can be
+//!   [refreshed](Query::refresh), [refetched periodically](Query::refetch_every) and
+//!   [cached](Query::key), so that queries with the same key share one result.
+//! - A [`Command`] is an async mutation: [run](Command::run) it, and see whether it's pending
+//!   and how it ended. Once it succeeded, it [refreshes](Command::refreshes) the loads and
+//!   queries that depend on what it changed.
+//!
+//! Both are plain values: keep them in the app state, a [`PageState`](crate::extract::PageState)
+//! or any struct of yours. Clones share their state.
+//!
+//! # Example
+//!
+//! A todo list that fetches the todos from a backend, and adds one with a `POST`:
 //!
 //! ```
+//! use std::sync::{Arc, Mutex};
+//!
 //! use egui::Ui;
-//! use egui_kit::RouteError;
-//! use egui_kit::extract::Remote;
-//! use egui_kit::remote::{Command, Query};
+//! use egui_kit::remote::{self, Command, Query, QueryState};
 //!
+//! /// The backend. A stand-in for an HTTP client like `reqwest::Client`: cheap to clone, and
+//! /// `Send`, as queries and commands run on other threads.
 //! #[derive(Clone, Default)]
-//! struct AppState;
+//! struct Api {
+//!     todos: Arc<Mutex<Vec<String>>>,
+//! }
 //!
-//! /// How many todos there are.
-//! #[derive(Clone, PartialEq)]
-//! struct TodoCount;
-//!
-//! impl Query<AppState> for TodoCount {
-//!     type Output = usize;
-//!
-//!     async fn run(self, _state: AppState) -> Result<usize, RouteError> {
-//!         Ok(3) // e.g. a `GET /todos/count`
+//! impl Api {
+//!     /// `GET /todos`
+//!     async fn todos(&self) -> Result<Vec<String>, String> {
+//!         Ok(self.todos.lock().unwrap().clone())
 //!     }
 //!
-//!     fn depends(&self) -> Vec<String> {
-//!         vec!["todos".into()]
+//!     /// `POST /todos`
+//!     async fn add_todo(&self, title: String) -> Result<(), String> {
+//!         if title.is_empty() {
+//!             return Err("a todo needs a title".into());
+//!         }
+//!         self.todos.lock().unwrap().push(title);
+//!         Ok(())
 //!     }
 //! }
 //!
-//! struct AddTodo(String);
-//!
-//! impl Command<AppState> for AddTodo {
-//!     type Output = ();
-//!
-//!     async fn run(self, _state: AppState) -> Result<(), RouteError> {
-//!         Ok(()) // e.g. a `POST /todos`
-//!     }
-//!
-//!     fn refreshes(&self) -> Vec<String> {
-//!         vec!["todos".into()]
-//!     }
+//! struct TodoList {
+//!     api: Api,
+//!     todos: Query<Vec<String>, String>,
+//!     add: Command<(), String>,
+//!     title: String,
 //! }
 //!
-//! fn view(ui: &mut Ui, remote: Remote<'_, AppState>) {
-//!     match remote.query(TodoCount).current() {
-//!         Some(count) => ui.label(format!("{count} todos")),
-//!         None => ui.spinner(),
-//!     };
+//! impl TodoList {
+//!     fn new(api: Api) -> Self {
+//!         // The closure is called for every fetch (the first one, refreshes, refetches), and
+//!         // returns a new future each time, with its own clone of the client.
+//!         let todos = remote::query({
+//!             let api = api.clone();
+//!             move || {
+//!                 let api = api.clone();
+//!                 async move { api.todos().await }
+//!             }
+//!         })
+//!         // Every query with this key, anywhere in the app, shares this one's value.
+//!         .key("todos")
+//!         // Refetch when "todos" is invalidated, e.g. by the command below.
+//!         .depends("todos");
 //!
-//!     let add = remote.command::<AddTodo>();
-//!     if ui.add_enabled(!add.is_pending(), egui::Button::new("Add")).clicked() {
-//!         add.run(AddTodo("Buy milk".into()));
+//!         Self {
+//!             api,
+//!             todos,
+//!             // Invalidates "todos" once a todo was added.
+//!             add: remote::command().refreshes("todos"),
+//!             title: String::new(),
+//!         }
 //!     }
-//!     if let Some(error) = add.error() {
-//!         ui.label(error.message);
+//!
+//!     fn ui(&mut self, ui: &mut Ui) {
+//!         match self.todos.state() {
+//!             QueryState::Loading => {
+//!                 ui.spinner();
+//!             }
+//!             QueryState::Ready(todos) => {
+//!                 for todo in todos.iter() {
+//!                     ui.label(todo);
+//!                 }
+//!             }
+//!             QueryState::Failed(error) => {
+//!                 ui.label(format!("Couldn't load the todos: {error}"));
+//!             }
+//!         }
+//!
+//!         ui.horizontal(|ui| {
+//!             ui.text_edit_singleline(&mut self.title);
+//!             if ui.add_enabled(!self.add.is_pending(), egui::Button::new("Add")).clicked() {
+//!                 let api = self.api.clone();
+//!                 let title = core::mem::take(&mut self.title);
+//!                 self.add.run(async move { api.add_todo(title).await });
+//!             }
+//!         });
+//!         if let Some(error) = self.add.error() {
+//!             ui.label(&*error);
+//!         }
 //!     }
 //! }
 //! ```
 //!
-//! Like `load`s, queries and commands are polled by the router, so no async runtime is needed,
-//! and their futures don't have to be `Send`. Natively, clients built on Tokio need its runtime
-//! entered around [`RouterApp::ui`](crate::RouterApp::ui); see
-//! [Async runtimes](crate#async-runtimes).
+//! When the `POST` succeeds, the command invalidates `"todos"`, the query refetches, and the
+//! list shows the new todo. Nothing else has to tell the list that it changed.
+//!
+//! # Keys, dependencies and refreshes
+//!
+//! They answer different questions:
+//!
+//! | | Answers | Set with |
+//! |---|---|---|
+//! | key | *Which* data is this? Queries with the same key are the same data. | [`Query::key`] |
+//! | dependency | *When* is it outdated? It refetches when one of its dependencies is invalidated. | [`Query::depends`], [`Page::depends`] |
+//! | refresh | *What* did a mutation change? The dependencies it invalidates when it succeeds. | [`Command::refreshes`] |
+//!
+//! A **key** identifies a query's value in the cache. Queries with the same key (and value and
+//! error types) share one state: they fetch once for all of them, and a query created later
+//! finds the value right away, e.g. when a page is opened again. So the key must contain
+//! everything the fetch depends on: `("user", id)`, not `"user"`. A query without a key has a
+//! value of its own, which is dropped with it.
+//!
+//! A **dependency** is a name for some data on the backend, like `"todos"` or `"users"`. It is
+//! the same kind of name as a load's [`Page::depends`]: a single invalidation reruns the loads
+//! and refetches the queries that depend on it, so many queries can depend on one name, and a
+//! query can depend on several. Dependencies are coarser than keys: `("user", 1)` and
+//! `("user", 2)` are two keys that both depend on `"users"`.
+//!
+//! A **refresh** invalidates a dependency once a command succeeded: the command says what it
+//! changed, and doesn't need to know who shows it. Invalidating a dependency directly does the
+//! same, with [`Nav::invalidate`] in a view, or with [`invalidate`] from anywhere on the UI
+//! thread.
+//!
+//! ```
+//! # use egui_kit::remote::{self, Command, Query};
+//! # #[derive(Clone)]
+//! # struct Api;
+//! # impl Api {
+//! #     async fn user(&self, _id: u32) -> Result<String, String> { Ok("Ferris".into()) }
+//! #     async fn rename(&self, _id: u32, _name: String) -> Result<(), String> { Ok(()) }
+//! # }
+//! fn user(api: &Api, id: u32) -> Query<String, String> {
+//!     let api = api.clone();
+//!     remote::query(move || {
+//!         let api = api.clone();
+//!         async move { api.user(id).await }
+//!     })
+//!     .key(("user", id)) // one cache entry per user
+//!     .depends("users") // refetched when any user changes
+//! }
+//!
+//! fn rename(api: &Api, rename: &Command<(), String>, id: u32, name: String) {
+//!     let api = api.clone();
+//!     // `rename` was created with `remote::command().refreshes("users")`: once it succeeded,
+//!     // every user query refetches, and so do the loads with `.depends("users")`.
+//!     rename.run(async move { api.rename(id, name).await });
+//! }
+//! ```
+//!
+//! The [`RouterApp`] applies invalidations at its next frame. A query that is invalidated keeps
+//! its value, and refetches the next time it is read.
+//!
+//! # Runtimes
+//!
+//! Natively, queries and commands run on a Tokio runtime, so their futures must be `Send` (see
+//! [`MaybeSend`]). It is the one the app entered if any (a multi-threaded one, as nothing drives
+//! a current-thread runtime between frames), else one that egui-kit starts. [`RouterApp::ui`]
+//! enters it too, so that hooks and loads can use Tokio-based clients like `reqwest`. On the
+//! web, futures run on the browser's event loop and needn't be `Send`.
+//!
+//! A query or command wakes egui up when it finishes, once a [`RouterApp`] drew a frame on
+//! this thread. Its result is picked up when it is read.
 //!
 //! # Caching
 //!
-//! A query runs the first time a view reads it, and its result is kept for as long as views keep
-//! reading it: it is dropped after a frame in which no view did, or [a while
-//! later](Query::keep_unread). While it reruns (after an
-//! [invalidation](crate::extract::Nav::invalidate) or a [refresh](Remote::refresh)),
-//! [`QueryState::current`] still has the previous value. A query that [refetches
-//! periodically](Query::refetch_every) reruns the same way.
+//! A query fetches on its first read, and keeps its value while it refetches. A keyed value
+//! outlives its queries for [a while](Query::cache_for), so that a page opened again shows it
+//! right away. A query reading a cached value for the first time refetches it if it is [older
+//! than `stale_after`](Query::stale_after), showing the cached value meanwhile.
 //!
-//! A run belongs to its query's entry: when the entry is dropped, or the query reruns before
-//! the run finished, its future is dropped too. That cancels it like any dropped future, e.g. a
-//! request in flight is aborted if the HTTP client does so on drop (as `reqwest` does on the
-//! web). Commands, on the other hand, always run to completion.
+//! Dropping a query's state (its last clone, and its cache entry if keyed) aborts its fetch,
+//! like refreshing it aborts the one in progress. Commands always run to completion.
+//!
+//! [`RouterApp`]: crate::RouterApp
+//! [`RouterApp::ui`]: crate::RouterApp::ui
+//! [`Page::depends`]: crate::page::Page::depends
+//! [`Nav::invalidate`]: crate::extract::Nav::invalidate
+
+mod command;
+mod query;
+mod runtime;
 
 use core::any::{Any, TypeId};
-use core::cell::{Cell, RefCell};
-use core::future::Future;
-use core::marker::PhantomData;
-use core::task::Poll;
+use core::cell::RefCell;
 use core::time::Duration;
 use std::collections::HashMap;
-use std::fmt;
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
-use egui::{AsId, Id};
+use egui::Id;
+use web_time::Instant;
 
-use crate::error::RouteError;
-use crate::exec;
-use crate::extract::{FromView, ViewStore};
+pub use command::{Command, command};
+pub use query::{Query, QueryState, query};
+pub use runtime::MaybeSend;
+pub(crate) use runtime::enter;
+
 use crate::load::Invalidation;
-use crate::page::{Frame, LocalBoxFuture, ViewContext};
 
-/// Async data that views read with [`Remote::query`], cached by value.
-///
-/// The type is the query and its value the input: `SearchAuthors("fe".into())` and
-/// `SearchAuthors("fer".into())` are two entries of the same query, and every view reading an
-/// equal value shares one result.
-pub trait Query<S>: Clone + PartialEq + 'static {
-    type Output: 'static;
+/// A query's state, as the registry sees it.
+trait Entry {
+    /// Marks it for a refetch if `invalidation` hits what it depends on.
+    fn invalidate(&self, invalidation: &Invalidation);
 
-    /// Fetches the data, with a clone of the app state.
-    fn run(self, state: S) -> impl Future<Output = Result<Self::Output, RouteError>> + 'static;
+    /// Whether a cache entry no query uses should be dropped.
+    fn expired(&self, now: Instant) -> bool;
 
-    /// Reruns the query when one of these keys is [invalidated](crate::extract::Nav::invalidate),
-    /// like [`Page::depends`](crate::page::Page::depends).
-    fn depends(&self) -> Vec<String> {
-        Vec::new()
-    }
-
-    /// Reruns the query this long after its last run finished, for as long as views read it:
-    /// for data that changes elsewhere, like an inbox. `None` (the default) only reruns it when
-    /// it is invalidated or [refreshed](Remote::refresh).
-    fn refetch_every(&self) -> Option<Duration> {
-        None
-    }
-
-    /// How long the result is kept once no view reads it, so that a view reading it again (after
-    /// switching tabs, or reopening a popup) finds it, and doesn't wait for a rerun. By default
-    /// it is dropped after the first frame in which no view read it.
-    ///
-    /// A query isn't polled while no view reads it: a run in progress continues once one does.
-    fn keep_unread(&self) -> Duration {
-        Duration::ZERO
-    }
+    fn as_any(self: Rc<Self>) -> Rc<dyn Any>;
 }
 
-/// An async mutation that views start with [`CommandHandle::run`].
-pub trait Command<S>: 'static {
-    type Output: 'static;
-
-    /// Carries out the mutation, with a clone of the app state.
-    fn run(self, state: S) -> impl Future<Output = Result<Self::Output, RouteError>> + 'static;
-
-    /// The keys to [invalidate](crate::extract::Nav::invalidate) once the command succeeded,
-    /// rerunning the loads and queries that depend on them.
-    fn refreshes(&self) -> Vec<String> {
-        Vec::new()
-    }
-}
-
-type QueryFuture = LocalBoxFuture<Result<Rc<dyn Any>, RouteError>>;
-
-/// A query's cached result.
-struct QueryEntry {
-    /// The query, to compare with the ones views read.
-    query: Box<dyn Any>,
-    keys: Vec<String>,
-    refetch_every: Option<Duration>,
-    /// When the last run finished, in egui's time.
-    finished_at: Option<f64>,
-    /// The last value it fetched.
-    value: Option<Rc<dyn Any>>,
-    /// Identifies `value`.
-    version: u64,
-    /// Whether the last run failed.
-    error: Option<RouteError>,
-    future: Option<QueryFuture>,
-    /// Rerun on the next read.
-    stale: bool,
-    /// Whether a view read it during this frame.
-    read: bool,
-    keep_unread: Duration,
-    /// When a view last read it, in egui's time.
-    read_at: f64,
-}
-
-/// The queries' cache and the commands in flight, owned by the app.
+/// The queries and commands of this thread.
 #[derive(Default)]
-pub(crate) struct RemoteStore {
-    queries: RefCell<Vec<QueryEntry>>,
-    /// The last version given to a value, so that versions are never reused.
-    version: Cell<u64>,
-    commands: Rc<Commands>,
+struct Registry {
+    /// Every query's state, to invalidate them.
+    entries: Vec<Weak<dyn Entry>>,
+    /// The state of keyed queries, by value type and key.
+    cache: HashMap<(TypeId, Id), Rc<dyn Entry>>,
+    /// The app's context, to wake it up when a query or command finished.
+    ctx: Option<egui::Context>,
+    /// Keys to invalidate, from [`invalidate`] and from the commands that succeeded.
+    invalidated: Arc<Mutex<Vec<String>>>,
 }
 
-/// The commands in flight, shared with the [`Spawner`]s.
-#[derive(Default)]
-struct Commands {
-    /// Yield the keys to invalidate.
-    futures: RefCell<Vec<LocalBoxFuture<Vec<String>>>>,
-    /// The app's, once it drew a frame: to wake it up for new commands.
-    ctx: RefCell<Option<egui::Context>>,
+thread_local! {
+    static REGISTRY: RefCell<Registry> = RefCell::default();
 }
 
-impl Commands {
-    fn push(&self, future: LocalBoxFuture<Vec<String>>) {
-        self.futures.borrow_mut().push(future);
-        if let Some(ctx) = &*self.ctx.borrow() {
-            ctx.request_repaint();
-        }
+fn with_registry<R>(f: impl FnOnce(&mut Registry) -> R) -> R {
+    REGISTRY.with(|registry| f(&mut registry.borrow_mut()))
+}
+
+fn context() -> Option<egui::Context> {
+    with_registry(|registry| registry.ctx.clone())
+}
+
+fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// Pushes `keys` to the invalidations and wakes the app up.
+fn push_invalidated(
+    invalidated: &Mutex<Vec<String>>,
+    ctx: Option<&egui::Context>,
+    keys: impl IntoIterator<Item = String>,
+) {
+    lock(invalidated).extend(keys);
+    if let Some(ctx) = ctx {
+        ctx.request_repaint();
     }
 }
 
-impl RemoteStore {
-    fn query<S: Clone, Q: Query<S>>(
-        &self,
-        query: &Q,
-        state: &S,
-        ctx: &egui::Context,
-    ) -> QueryState<Q::Output> {
-        let mut queries = self.queries.borrow_mut();
-        let index = queries
+/// Reruns the loads and queries that depend on `key`, like
+/// [`Nav::invalidate`](crate::extract::Nav::invalidate), from anywhere on the UI thread. The
+/// router applies it at its next frame.
+pub fn invalidate(key: impl Into<String>) {
+    let (invalidated, ctx) =
+        with_registry(|registry| (Arc::clone(&registry.invalidated), registry.ctx.clone()));
+    push_invalidated(&invalidated, ctx.as_ref(), [key.into()]);
+}
+
+/// Remembers the app's context, at the start of its frame.
+pub(crate) fn begin_frame(ctx: &egui::Context) {
+    with_registry(|registry| registry.ctx = Some(ctx.clone()));
+}
+
+/// The keys [invalidated](invalidate) since the last call.
+pub(crate) fn take_invalidated() -> Vec<String> {
+    let invalidated = with_registry(|registry| Arc::clone(&registry.invalidated));
+    core::mem::take(&mut *lock(&invalidated))
+}
+
+/// Marks the queries that depend on what `invalidation` hits for a refetch.
+pub(crate) fn invalidate_queries(invalidation: &Invalidation) {
+    let entries: Vec<_> = with_registry(|registry| {
+        registry.entries.retain(|entry| entry.strong_count() > 0);
+        registry.entries.iter().filter_map(Weak::upgrade).collect()
+    });
+    for entry in entries {
+        entry.invalidate(invalidation);
+    }
+}
+
+/// Drops the cache entries that no query used for long enough.
+pub(crate) fn end_frame() {
+    let now = Instant::now();
+    // Dropped outside of the registry: dropping a query's state aborts its fetch.
+    let _expired: Vec<_> = with_registry(|registry| {
+        let keys: Vec<_> = registry
+            .cache
             .iter()
-            .position(|entry| entry.query.downcast_ref::<Q>() == Some(query))
-            .unwrap_or_else(|| {
-                queries.push(QueryEntry {
-                    query: Box::new(query.clone()),
-                    keys: query.depends(),
-                    refetch_every: query.refetch_every(),
-                    finished_at: None,
-                    value: None,
-                    version: 0,
-                    error: None,
-                    future: None,
-                    stale: true,
-                    read: false,
-                    keep_unread: query.keep_unread(),
-                    read_at: 0.0,
-                });
-                queries.len() - 1
-            });
-        let entry = &mut queries[index];
-        entry.read = true;
-        let now = ctx.input(|i| i.time);
-        if let (Some(every), Some(finished_at), None) =
-            (entry.refetch_every, entry.finished_at, &entry.future)
-        {
-            let due = finished_at + every.as_secs_f64();
-            if now >= due {
-                entry.stale = true;
-            } else {
-                ctx.request_repaint_after_secs((due - now) as f32);
-            }
-        }
-        entry.read_at = now;
-        if entry.stale {
-            entry.stale = false;
-            let future = query.clone().run(state.clone());
-            entry.future = Some(Box::pin(async move {
-                future.await.map(|value| Rc::new(value) as Rc<dyn Any>)
-            }));
-        }
-        // Polled when read, so a query that is ready right away never shows a loading state.
-        if let Some(future) = &mut entry.future
-            && let Poll::Ready(result) = exec::poll_once(ctx, future.as_mut())
-        {
-            entry.future = None;
-            entry.finished_at = Some(now);
-            if let Some(every) = entry.refetch_every {
-                ctx.request_repaint_after(every);
-            }
-            match result {
-                Ok(value) => {
-                    entry.value = Some(value);
-                    self.version.set(self.version.get() + 1);
-                    entry.version = self.version.get();
-                    entry.error = None;
-                }
-                Err(error) => entry.error = Some(error),
-            }
-        }
-        QueryState {
-            value: entry
-                .value
-                .clone()
-                .map(|value| value.downcast().expect("stored by type")),
-            version: entry.version,
-            error: entry.error.clone(),
-            loading: entry.future.is_some(),
-        }
-    }
-
-    /// Reruns `query` on its next read.
-    fn refresh<Q: 'static + PartialEq>(&self, query: &Q) {
-        for entry in self.queries.borrow_mut().iter_mut() {
-            if entry.query.downcast_ref::<Q>() == Some(query) {
-                entry.stale = true;
-                entry.future = None;
-            }
-        }
-    }
-
-    /// Reruns the queries that depend on what `invalidation` hits, on their next read.
-    pub(crate) fn invalidate(&self, invalidation: &Invalidation) {
-        for entry in self.queries.borrow_mut().iter_mut() {
-            if invalidation.hits(&entry.keys) {
-                entry.stale = true;
-                entry.future = None;
-            }
-        }
-    }
-
-    /// Drops the queries no view read during the frame, once they were [kept](Query::keep_unread)
-    /// long enough.
-    pub(crate) fn end_frame(&self, ctx: &egui::Context) {
-        let now = ctx.input(|i| i.time);
-        self.queries.borrow_mut().retain_mut(|entry| {
-            let read = entry.read;
-            entry.read = false;
-            read || now - entry.read_at < entry.keep_unread.as_secs_f64()
-        });
-    }
-
-    /// Drives the commands in flight. Returns the keys that those that succeeded refresh.
-    pub(crate) fn poll_commands(&self, ctx: &egui::Context) -> Vec<String> {
-        self.commands.ctx.replace(Some(ctx.clone()));
-        let mut refreshes = Vec::new();
-        // Taken out while polling: a command may start another.
-        let mut futures = self.commands.futures.take();
-        futures.retain_mut(|future| match exec::poll_once(ctx, future.as_mut()) {
-            Poll::Ready(keys) => {
-                refreshes.extend(keys);
-                false
-            }
-            Poll::Pending => true,
-        });
-        let mut commands = self.commands.futures.borrow_mut();
-        futures.append(&mut commands);
-        *commands = futures;
-        refreshes
-    }
-
-    pub(crate) fn spawner(&self) -> Spawner {
-        Spawner {
-            commands: Rc::clone(&self.commands),
-        }
-    }
+            .filter(|(_, entry)| Rc::strong_count(entry) == 1 && entry.expired(now))
+            .map(|(key, _)| *key)
+            .collect();
+        keys.into_iter()
+            .filter_map(|key| registry.cache.remove(&key))
+            .collect()
+    });
 }
 
-/// A query's result, as seen by a view: see [`Remote::query`].
-pub struct QueryState<T> {
-    value: Option<Rc<T>>,
-    version: u64,
-    error: Option<RouteError>,
-    loading: bool,
-}
-
-impl<T> QueryState<T> {
-    /// The last value the query fetched. While it reruns, or if the rerun failed, this is the
-    /// previous value.
-    pub fn current(&self) -> Option<&T> {
-        self.value.as_deref()
-    }
-
-    /// The current value, shared with the cache: cheap to keep beyond the frame.
-    pub fn rc(&self) -> Option<Rc<T>> {
-        self.value.clone()
-    }
-
-    /// Identifies the [current](Self::current) value: it changes whenever the query fetched a
-    /// new one, so that a view can rebuild what it derives from the value only then. `0` while
-    /// there is no value.
-    ///
-    /// ```
-    /// # use egui_kit::remote::QueryState;
-    /// #[derive(Default)]
-    /// struct Calendar {
-    ///     version: u64,
-    ///     items: Vec<String>,
-    /// }
-    ///
-    /// fn update(calendar: &mut Calendar, events: &QueryState<Vec<String>>) {
-    ///     if events.version() != calendar.version {
-    ///         calendar.version = events.version();
-    ///         calendar.items = events.current().cloned().unwrap_or_default();
-    ///     }
-    /// }
-    /// ```
-    pub fn version(&self) -> u64 {
-        self.version
-    }
-
-    /// Why the last run failed.
-    pub fn error(&self) -> Option<&RouteError> {
-        self.error.as_ref()
-    }
-
-    /// Whether the query is running: for the first time if [`current`](Self::current) is
-    /// `None`, else rerunning.
-    pub fn is_loading(&self) -> bool {
-        self.loading
-    }
-}
-
-impl<T: fmt::Debug> fmt::Debug for QueryState<T> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("QueryState")
-            .field("current", &self.value)
-            .field("version", &self.version)
-            .field("error", &self.error)
-            .field("loading", &self.loading)
-            .finish()
-    }
-}
-
-/// Queries and commands, in views: see the [module docs](crate::remote).
-///
-/// An extractor: add a `remote: Remote<'_, AppState>` argument to any view. It is `Copy`.
-pub struct Remote<'f, S> {
-    frame: &'f Frame<'f>,
-    store: &'f ViewStore,
-    state: &'f S,
-}
-
-impl<S> Clone for Remote<'_, S> {
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-
-impl<S> Copy for Remote<'_, S> {}
-
-impl<S: 'static, D> FromView<S, D> for Remote<'_, S> {
-    type Item<'f> = Remote<'f, S>;
-
-    fn from_view<'f>(cx: &'f ViewContext<'_, S>) -> Remote<'f, S> {
-        Remote {
-            frame: cx.frame(),
-            store: cx.store(),
-            state: cx.state(),
-        }
-    }
-}
-
-impl<'f, S: Clone + 'static> Remote<'f, S> {
-    /// Reads `query`, running it if it isn't cached. Call it every frame you show the result:
-    /// a query no view reads during a frame is dropped (see [`Query::keep_unread`]).
-    #[expect(
-        clippy::needless_pass_by_value,
-        reason = "`remote.query(SearchAuthors(prefix))` reads better than with a reference"
-    )]
-    pub fn query<Q: Query<S>>(&self, query: Q) -> QueryState<Q::Output> {
-        self.frame.remote.query(&query, self.state, &self.frame.ctx)
-    }
-
-    /// Reruns `query` the next time it is read. To rerun every query that depends on some data,
-    /// [invalidate](crate::extract::Nav::invalidate) it instead.
-    pub fn refresh<Q: Query<S>>(&self, query: &Q) {
-        self.frame.remote.refresh(query);
-        self.frame.ctx.request_repaint();
-    }
-
-    /// Runs `future` like a command, without defining one: the router polls it, and once it
-    /// succeeded, [invalidates](crate::extract::Nav::invalidate) the `refreshes` keys. Ignored
-    /// in an [outgoing](crate::extract::Nav::is_outgoing) page.
-    ///
-    /// Its state doesn't belong to the view: keep the returned [`Running`] (e.g. in a
-    /// [`PageState`](crate::extract::PageState)) to see how it went. To run futures where no
-    /// view is at hand, see [`Remote::spawner`].
-    ///
-    /// ```
-    /// # use egui_kit::extract::{PageState, Remote};
-    /// # use egui_kit::remote::Running;
-    /// # #[derive(Clone)]
-    /// # struct AppState;
-    /// # async fn post_todo(_title: String) -> Result<(), egui_kit::RouteError> { Ok(()) }
-    /// #[derive(Default)]
-    /// struct Form {
-    ///     title: String,
-    ///     saving: Option<Running<()>>,
-    /// }
-    ///
-    /// fn view(ui: &mut egui::Ui, mut form: PageState<Form>, remote: Remote<'_, AppState>) {
-    ///     ui.text_edit_singleline(&mut form.title);
-    ///     if ui.button("Save").clicked() {
-    ///         let title = form.title.clone();
-    ///         form.saving = Some(remote.run(&["todos"], post_todo(title)));
-    ///     }
-    ///     if let Some(Err(error)) = form.saving.as_ref().and_then(Running::take_result) {
-    ///         ui.label(error.message);
-    ///     }
-    /// }
-    /// ```
-    pub fn run<T: 'static>(
-        &self,
-        refreshes: &[&str],
-        future: impl Future<Output = Result<T, RouteError>> + 'static,
-    ) -> Running<T> {
-        if self.frame.outgoing {
-            return Running::done();
-        }
-        self.spawner().run(refreshes, future)
-    }
-
-    /// A handle to run futures like commands, from anywhere: see [`Spawner`].
-    pub fn spawner(&self) -> Spawner {
-        self.frame.remote.spawner()
-    }
-
-    /// The view's handle to the command `C`: to run it, and to see whether it's running and
-    /// what it returned.
-    ///
-    /// Its state belongs to the view, for as long as its page (or layout) is shown. A command
-    /// still running when the page is left completes and refreshes what it changed, but its
-    /// output is dropped. The view has one state per command type; see
-    /// [`command_keyed`](Self::command_keyed) for more.
-    pub fn command<C: Command<S>>(&self) -> CommandHandle<'f, S, C> {
-        self.command_with_id(Id::NULL)
-    }
-
-    /// Like [`command`](Self::command), with a state of its own for each `key`: for parts of a
-    /// view that run the same command type independently, like two dialogs or the rows of a
-    /// list.
-    ///
-    /// ```
-    /// # use egui_kit::extract::Remote;
-    /// # use egui_kit::remote::Command;
-    /// # use egui_kit::RouteError;
-    /// # #[derive(Clone)]
-    /// # struct AppState;
-    /// struct Delete(u32);
-    ///
-    /// impl Command<AppState> for Delete {
-    ///     type Output = ();
-    ///
-    ///     async fn run(self, _state: AppState) -> Result<(), RouteError> {
-    ///         Ok(())
-    ///     }
-    /// }
-    ///
-    /// fn rows(ui: &mut egui::Ui, ids: &[u32], remote: Remote<'_, AppState>) {
-    ///     for &id in ids {
-    ///         let delete = remote.command_keyed::<Delete>(id);
-    ///         if ui.add_enabled(!delete.is_pending(), egui::Button::new("Delete")).clicked() {
-    ///             delete.run(Delete(id));
-    ///         }
-    ///     }
-    /// }
-    /// ```
-    pub fn command_keyed<C: Command<S>>(&self, key: impl AsId) -> CommandHandle<'f, S, C> {
-        self.command_with_id(Id::new(key))
-    }
-
-    fn command_with_id<C: Command<S>>(&self, id: Id) -> CommandHandle<'f, S, C> {
-        let slot = Rc::clone(
-            self.store
-                .commands
-                .borrow_mut()
-                .entry((TypeId::of::<C>(), id))
-                .or_insert_with(|| Rc::new(RefCell::new(CommandSlot::<C::Output>::default()))),
-        );
-        CommandHandle {
-            remote: *self,
-            slot: slot.downcast().expect("stored by type"),
-            command: PhantomData,
-        }
-    }
-}
-
-/// The state of a view's command.
-struct CommandSlot<T> {
-    pending: usize,
-    /// How the last run ended, until the view takes it.
-    outcome: Option<Result<T, RouteError>>,
-    /// Why the last run failed, until it runs again.
-    error: Option<RouteError>,
-}
-
-impl<T> Default for CommandSlot<T> {
-    fn default() -> Self {
-        Self {
-            pending: 0,
-            outcome: None,
-            error: None,
-        }
-    }
-}
-
-/// Commands' state, per view, by command type and key ([`Id::NULL`] without one).
-pub(crate) type CommandSlots = RefCell<HashMap<(TypeId, Id), Rc<dyn Any>>>;
-
-/// A view's handle to the command `C`, from [`Remote::command`].
-pub struct CommandHandle<'f, S, C: Command<S>> {
-    remote: Remote<'f, S>,
-    slot: Rc<RefCell<CommandSlot<C::Output>>>,
-    command: PhantomData<fn(C)>,
-}
-
-impl<S: Clone + 'static, C: Command<S>> CommandHandle<'_, S, C> {
-    /// Starts `command`. Ignored in an [outgoing](crate::extract::Nav::is_outgoing) page.
-    pub fn run(&self, command: C) {
-        if self.remote.frame.outgoing {
-            return;
-        }
-        let refreshes = command.refreshes();
-        let future = command.run(self.remote.state.clone());
-        let slot = Rc::clone(&self.slot);
-        {
-            let mut slot = slot.borrow_mut();
-            slot.pending += 1;
-            slot.error = None;
-        }
-        self.remote.frame.remote.commands.push(Box::pin(async move {
-            let result = future.await;
-            let mut slot = slot.borrow_mut();
-            slot.pending -= 1;
-            if let Err(error) = &result {
-                slot.error = Some(error.clone());
-            }
-            let refreshes = if result.is_ok() {
-                refreshes
-            } else {
-                Vec::new()
-            };
-            slot.outcome = Some(result);
-            refreshes
-        }));
-        self.remote.frame.ctx.request_repaint();
-    }
-
-    /// Whether the command is running.
-    pub fn is_pending(&self) -> bool {
-        self.slot.borrow().pending > 0
-    }
-
-    /// What the command returned, if its last run succeeded: taken, so that the view acts on it
-    /// once (e.g. navigates to what it created).
-    pub fn take_output(&self) -> Option<C::Output> {
-        let mut slot = self.slot.borrow_mut();
-        match slot.outcome.take()? {
-            Ok(output) => Some(output),
-            Err(error) => {
-                slot.outcome = Some(Err(error));
-                None
-            }
-        }
-    }
-
-    /// Why the last run failed, taken like [`take_output`](Self::take_output): to react once
-    /// to a failure (a dialog, a shake). [`error`](Self::error) still has it.
-    pub fn take_error(&self) -> Option<RouteError> {
-        let mut slot = self.slot.borrow_mut();
-        match slot.outcome.take()? {
-            Ok(output) => {
-                slot.outcome = Some(Ok(output));
-                None
-            }
-            Err(error) => Some(error),
-        }
-    }
-
-    /// How the last run ended, taken: once per run, in the frame after it completed (unless
-    /// taken with [`take_output`](Self::take_output) or [`take_error`](Self::take_error)).
-    ///
-    /// ```
-    /// # use egui_kit::remote::{Command, CommandHandle};
-    /// # fn react<S: Clone + 'static, C: Command<S>>(ui: &mut egui::Ui, save: CommandHandle<'_, S, C>) {
-    /// match save.take_result() {
-    ///     Some(Ok(_)) => { /* close the dialog */ }
-    ///     Some(Err(error)) => { /* show the error in a toast */ }
-    ///     None => {}
-    /// }
-    /// # }
-    /// ```
-    pub fn take_result(&self) -> Option<Result<C::Output, RouteError>> {
-        self.slot.borrow_mut().outcome.take()
-    }
-
-    /// Why the command last failed, to show it: kept until it runs again.
-    pub fn error(&self) -> Option<RouteError> {
-        self.slot.borrow().error.clone()
-    }
-}
-
-/// Runs futures like commands, from anywhere.
-///
-/// Useful in helpers deep down a view, widgets that don't know the app state, or callbacks. Get
-/// one from [`Remote::spawner`] or [`RouterApp::spawner`](crate::RouterApp::spawner); it is
-/// `'static` and cheap to clone.
-#[derive(Clone)]
-pub struct Spawner {
-    commands: Rc<Commands>,
-}
-
-impl Spawner {
-    /// Runs `future`: the router polls it, and once it succeeded,
-    /// [invalidates](crate::extract::Nav::invalidate) the `refreshes` keys. The returned
-    /// [`Running`] tells how it went; dropping it doesn't cancel the future.
-    pub fn run<T: 'static>(
-        &self,
-        refreshes: &[&str],
-        future: impl Future<Output = Result<T, RouteError>> + 'static,
-    ) -> Running<T> {
-        let refreshes: Vec<String> = refreshes.iter().map(|&key| key.to_owned()).collect();
-        let running = Running(Rc::new(RefCell::new(RunState {
-            pending: true,
-            outcome: None,
-        })));
-        let state = Rc::clone(&running.0);
-        self.commands.push(Box::pin(async move {
-            let result = future.await;
-            let refreshes = if result.is_ok() {
-                refreshes
-            } else {
-                Vec::new()
-            };
-            let mut state = state.borrow_mut();
-            state.pending = false;
-            state.outcome = Some(result);
-            refreshes
-        }));
-        running
-    }
-}
-
-impl fmt::Debug for Spawner {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Spawner").finish_non_exhaustive()
-    }
-}
-
-struct RunState<T> {
-    pending: bool,
-    outcome: Option<Result<T, RouteError>>,
-}
-
-/// A future started with [`Remote::run`] or [`Spawner::run`].
-pub struct Running<T>(Rc<RefCell<RunState<T>>>);
-
-impl<T> Running<T> {
-    /// One that never ran.
-    fn done() -> Self {
-        Self(Rc::new(RefCell::new(RunState {
-            pending: false,
-            outcome: None,
-        })))
-    }
-
-    /// Whether the future is still running.
-    pub fn is_pending(&self) -> bool {
-        self.0.borrow().pending
-    }
-
-    /// How it ended: taken, so that the view acts on it once.
-    pub fn take_result(&self) -> Option<Result<T, RouteError>> {
-        self.0.borrow_mut().outcome.take()
-    }
-}
-
-impl<T> fmt::Debug for Running<T> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Running")
-            .field("pending", &self.is_pending())
-            .finish_non_exhaustive()
-    }
-}
+/// How long a keyed query's value is kept by default once no query uses it.
+const CACHE_FOR: Duration = Duration::from_mins(5);
