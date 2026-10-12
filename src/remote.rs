@@ -10,6 +10,8 @@
 //! - A [`Command`] is an async mutation, started from a view with [`CommandHandle::run`]. Its
 //!   state (pending, output, error) belongs to the view, and when it succeeds it
 //!   [refreshes](Command::refreshes) the loads and queries that depend on what it changed.
+//! - [`Remote::run`] runs a future like a command, without defining one, and a [`Spawner`] does
+//!   so from anywhere, even outside of views.
 //!
 //! ```
 //! use egui::Ui;
@@ -178,8 +180,25 @@ pub(crate) struct RemoteStore {
     queries: RefCell<Vec<QueryEntry>>,
     /// The last version given to a value, so that versions are never reused.
     version: Cell<u64>,
+    commands: Rc<Commands>,
+}
+
+/// The commands in flight, shared with the [`Spawner`]s.
+#[derive(Default)]
+struct Commands {
     /// Yield the keys to invalidate.
-    commands: RefCell<Vec<LocalBoxFuture<Vec<String>>>>,
+    futures: RefCell<Vec<LocalBoxFuture<Vec<String>>>>,
+    /// The app's, once it drew a frame: to wake it up for new commands.
+    ctx: RefCell<Option<egui::Context>>,
+}
+
+impl Commands {
+    fn push(&self, future: LocalBoxFuture<Vec<String>>) {
+        self.futures.borrow_mut().push(future);
+        if let Some(ctx) = &*self.ctx.borrow() {
+            ctx.request_repaint();
+        }
+    }
 }
 
 impl RemoteStore {
@@ -294,17 +313,27 @@ impl RemoteStore {
 
     /// Drives the commands in flight. Returns the keys that those that succeeded refresh.
     pub(crate) fn poll_commands(&self, ctx: &egui::Context) -> Vec<String> {
+        self.commands.ctx.replace(Some(ctx.clone()));
         let mut refreshes = Vec::new();
-        self.commands.borrow_mut().retain_mut(|future| {
-            match exec::poll_once(ctx, future.as_mut()) {
-                Poll::Ready(keys) => {
-                    refreshes.extend(keys);
-                    false
-                }
-                Poll::Pending => true,
+        // Taken out while polling: a command may start another.
+        let mut futures = self.commands.futures.take();
+        futures.retain_mut(|future| match exec::poll_once(ctx, future.as_mut()) {
+            Poll::Ready(keys) => {
+                refreshes.extend(keys);
+                false
             }
+            Poll::Pending => true,
         });
+        let mut commands = self.commands.futures.borrow_mut();
+        futures.append(&mut commands);
+        *commands = futures;
         refreshes
+    }
+
+    pub(crate) fn spawner(&self) -> Spawner {
+        Spawner {
+            commands: Rc::clone(&self.commands),
+        }
     }
 }
 
@@ -421,6 +450,53 @@ impl<'f, S: Clone + 'static> Remote<'f, S> {
         self.frame.ctx.request_repaint();
     }
 
+    /// Runs `future` like a command, without defining one: the router polls it, and once it
+    /// succeeded, [invalidates](crate::extract::Nav::invalidate) the `refreshes` keys. Ignored
+    /// in an [outgoing](crate::extract::Nav::is_outgoing) page.
+    ///
+    /// Its state doesn't belong to the view: keep the returned [`Running`] (e.g. in a
+    /// [`PageState`](crate::extract::PageState)) to see how it went. To run futures where no
+    /// view is at hand, see [`Remote::spawner`].
+    ///
+    /// ```
+    /// # use egui_kit::extract::{PageState, Remote};
+    /// # use egui_kit::remote::Running;
+    /// # #[derive(Clone)]
+    /// # struct AppState;
+    /// # async fn post_todo(_title: String) -> Result<(), egui_kit::RouteError> { Ok(()) }
+    /// #[derive(Default)]
+    /// struct Form {
+    ///     title: String,
+    ///     saving: Option<Running<()>>,
+    /// }
+    ///
+    /// fn view(ui: &mut egui::Ui, mut form: PageState<Form>, remote: Remote<'_, AppState>) {
+    ///     ui.text_edit_singleline(&mut form.title);
+    ///     if ui.button("Save").clicked() {
+    ///         let title = form.title.clone();
+    ///         form.saving = Some(remote.run(&["todos"], post_todo(title)));
+    ///     }
+    ///     if let Some(Err(error)) = form.saving.as_ref().and_then(Running::take_result) {
+    ///         ui.label(error.message);
+    ///     }
+    /// }
+    /// ```
+    pub fn run<T: 'static>(
+        &self,
+        refreshes: &[&str],
+        future: impl Future<Output = Result<T, RouteError>> + 'static,
+    ) -> Running<T> {
+        if self.frame.outgoing {
+            return Running::done();
+        }
+        self.spawner().run(refreshes, future)
+    }
+
+    /// A handle to run futures like commands, from anywhere: see [`Spawner`].
+    pub fn spawner(&self) -> Spawner {
+        self.frame.remote.spawner()
+    }
+
     /// The view's handle to the command `C`: to run it, and to see whether it's running and
     /// what it returned.
     ///
@@ -524,26 +600,21 @@ impl<S: Clone + 'static, C: Command<S>> CommandHandle<'_, S, C> {
             slot.pending += 1;
             slot.error = None;
         }
-        self.remote
-            .frame
-            .remote
-            .commands
-            .borrow_mut()
-            .push(Box::pin(async move {
-                let result = future.await;
-                let mut slot = slot.borrow_mut();
-                slot.pending -= 1;
-                if let Err(error) = &result {
-                    slot.error = Some(error.clone());
-                }
-                let refreshes = if result.is_ok() {
-                    refreshes
-                } else {
-                    Vec::new()
-                };
-                slot.outcome = Some(result);
+        self.remote.frame.remote.commands.push(Box::pin(async move {
+            let result = future.await;
+            let mut slot = slot.borrow_mut();
+            slot.pending -= 1;
+            if let Err(error) = &result {
+                slot.error = Some(error.clone());
+            }
+            let refreshes = if result.is_ok() {
                 refreshes
-            }));
+            } else {
+                Vec::new()
+            };
+            slot.outcome = Some(result);
+            refreshes
+        }));
         self.remote.frame.ctx.request_repaint();
     }
 
@@ -598,5 +669,88 @@ impl<S: Clone + 'static, C: Command<S>> CommandHandle<'_, S, C> {
     /// Why the command last failed, to show it: kept until it runs again.
     pub fn error(&self) -> Option<RouteError> {
         self.slot.borrow().error.clone()
+    }
+}
+
+/// Runs futures like commands, from anywhere.
+///
+/// Useful in helpers deep down a view, widgets that don't know the app state, or callbacks. Get
+/// one from [`Remote::spawner`] or [`RouterApp::spawner`](crate::RouterApp::spawner); it is
+/// `'static` and cheap to clone.
+#[derive(Clone)]
+pub struct Spawner {
+    commands: Rc<Commands>,
+}
+
+impl Spawner {
+    /// Runs `future`: the router polls it, and once it succeeded,
+    /// [invalidates](crate::extract::Nav::invalidate) the `refreshes` keys. The returned
+    /// [`Running`] tells how it went; dropping it doesn't cancel the future.
+    pub fn run<T: 'static>(
+        &self,
+        refreshes: &[&str],
+        future: impl Future<Output = Result<T, RouteError>> + 'static,
+    ) -> Running<T> {
+        let refreshes: Vec<String> = refreshes.iter().map(|&key| key.to_owned()).collect();
+        let running = Running(Rc::new(RefCell::new(RunState {
+            pending: true,
+            outcome: None,
+        })));
+        let state = Rc::clone(&running.0);
+        self.commands.push(Box::pin(async move {
+            let result = future.await;
+            let refreshes = if result.is_ok() {
+                refreshes
+            } else {
+                Vec::new()
+            };
+            let mut state = state.borrow_mut();
+            state.pending = false;
+            state.outcome = Some(result);
+            refreshes
+        }));
+        running
+    }
+}
+
+impl fmt::Debug for Spawner {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Spawner").finish_non_exhaustive()
+    }
+}
+
+struct RunState<T> {
+    pending: bool,
+    outcome: Option<Result<T, RouteError>>,
+}
+
+/// A future started with [`Remote::run`] or [`Spawner::run`].
+pub struct Running<T>(Rc<RefCell<RunState<T>>>);
+
+impl<T> Running<T> {
+    /// One that never ran.
+    fn done() -> Self {
+        Self(Rc::new(RefCell::new(RunState {
+            pending: false,
+            outcome: None,
+        })))
+    }
+
+    /// Whether the future is still running.
+    pub fn is_pending(&self) -> bool {
+        self.0.borrow().pending
+    }
+
+    /// How it ended: taken, so that the view acts on it once.
+    pub fn take_result(&self) -> Option<Result<T, RouteError>> {
+        self.0.borrow_mut().outcome.take()
+    }
+}
+
+impl<T> fmt::Debug for Running<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Running")
+            .field("pending", &self.is_pending())
+            .finish_non_exhaustive()
     }
 }
