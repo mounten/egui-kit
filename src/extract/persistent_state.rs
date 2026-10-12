@@ -18,7 +18,8 @@ use crate::page::ViewContext;
 ///
 /// Use it for preferences: a theme, a sort order, a collapsed sidebar. It is created with
 /// `T::default()`, read at the start of the view and written back when the view returns (the
-/// last view to write wins), so keep it small.
+/// last view to write wins), so keep it small. Outside of views, use
+/// [`PersistentState::get`] and [`PersistentState::set`].
 ///
 /// Saving needs eframe's `persistence` feature. Without it, the value still lives in egui's
 /// memory, for as long as the app runs.
@@ -42,7 +43,6 @@ where
     T: Serialize + DeserializeOwned + Clone + Default + Send + Sync + 'static,
 {
     value: Option<T>,
-    id: Id,
     ctx: &'f egui::Context,
 }
 
@@ -54,13 +54,41 @@ where
 
     fn from_view<'f>(cx: &'f ViewContext<'_, S>) -> PersistentState<'f, T> {
         let ctx = &cx.frame().ctx;
-        let id = Id::new(("egui_kit::PersistentState", type_name::<T>()));
-        let value = ctx.data_mut(|data| data.get_persisted_mut_or_default::<T>(id).clone());
         PersistentState {
-            value: Some(value),
-            id,
+            value: Some(Self::get(ctx)),
             ctx,
         }
+    }
+}
+
+/// Outside of views, e.g. to apply a theme before the router draws.
+impl<T> PersistentState<'_, T>
+where
+    T: Serialize + DeserializeOwned + Clone + Default + Send + Sync + 'static,
+{
+    /// The value.
+    ///
+    /// ```
+    /// # use egui_kit::extract::PersistentState;
+    /// # #[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
+    /// # struct Preferences { dark: bool }
+    /// fn apply_theme(ctx: &egui::Context) {
+    ///     let preferences = PersistentState::<Preferences>::get(ctx);
+    ///     ctx.set_theme(if preferences.dark { egui::Theme::Dark } else { egui::Theme::Light });
+    /// }
+    /// ```
+    pub fn get(ctx: &egui::Context) -> T {
+        ctx.data_mut(|data| data.get_persisted_mut_or_default::<T>(Self::id()).clone())
+    }
+
+    /// Replaces the value.
+    pub fn set(ctx: &egui::Context, value: T) {
+        ctx.data_mut(|data| data.insert_persisted(Self::id(), value));
+    }
+
+    /// Where the value is kept in egui's [memory](egui::Memory).
+    pub fn id() -> Id {
+        Id::new(("egui_kit::PersistentState", type_name::<T>()))
     }
 }
 
@@ -90,8 +118,7 @@ where
 {
     fn drop(&mut self) {
         if let Some(value) = self.value.take() {
-            self.ctx
-                .data_mut(|data| data.insert_persisted(self.id, value));
+            Self::set(self.ctx, value);
         }
     }
 }
