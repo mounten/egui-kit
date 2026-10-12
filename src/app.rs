@@ -113,6 +113,12 @@ impl<S: Clone + 'static> RouterApp<S> {
         &self.state
     }
 
+    /// A handle to run futures like commands from outside the views, see
+    /// [`Spawner`](crate::remote::Spawner).
+    pub fn spawner(&self) -> crate::remote::Spawner {
+        self.remote.spawner()
+    }
+
     /// The request of the page on screen.
     pub fn request(&self) -> Option<&Request> {
         self.mounted.as_ref().map(|mounted| &mounted.request)

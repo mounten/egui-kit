@@ -9,7 +9,7 @@ use std::rc::Rc;
 use egui::Ui;
 use egui_kit::extract::{Nav, Remote, State};
 use egui_kit::page::{Layout, Outlet, Page};
-use egui_kit::remote::{Command, Query};
+use egui_kit::remote::{Command, Query, Running};
 use egui_kit::{MemoryHistory, Rejection, RouteError, Router, RouterApp};
 
 /// No runs.
@@ -478,4 +478,49 @@ fn keyed_commands_have_their_own_state() {
         assert!(remote.command_keyed::<Increment>("b").error().is_none());
     });
     frame(&ctx, &mut app);
+}
+
+#[test]
+fn futures_run_like_commands() {
+    let ctx = egui::Context::default();
+    let mut app = app();
+    frame(&ctx, &mut app);
+
+    // From a view: refreshes on success.
+    let running: Rc<RefCell<Option<Running<u32>>>> = Rc::default();
+    app.state().gate.set(false);
+    let slot = Rc::clone(&running);
+    let state = app.state().clone();
+    act(&app, move |remote, _| {
+        *slot.borrow_mut() = Some(remote.run(&["count"], async move {
+            state.gate().await;
+            state.count.set(7);
+            Ok(7)
+        }));
+    });
+    frame(&ctx, &mut app);
+    let handle = running.borrow_mut().take().unwrap();
+    assert!(handle.is_pending());
+    app.state().gate.set(true);
+    assert_eq!(frame(&ctx, &mut app), ["load", "count"]);
+    assert!(!handle.is_pending());
+    assert_eq!(handle.take_result(), Some(Ok(7)));
+    assert_eq!(handle.take_result(), None);
+
+    // From outside the views, starting another one from inside: failures refresh nothing.
+    let spawner = app.spawner();
+    let inner = spawner.clone();
+    let outer = spawner.run(&["count"], async move {
+        Ok(inner.run(&["count"], async {
+            Err::<(), _>(RouteError::new(500, "inner"))
+        }))
+    });
+    assert_eq!(frame(&ctx, &mut app), ["load", "count"]);
+    let inner = outer.take_result().unwrap().unwrap();
+    frame(&ctx, &mut app);
+    assert_eq!(
+        inner.take_result(),
+        Some(Err(RouteError::new(500, "inner")))
+    );
+    assert_eq!(frame(&ctx, &mut app), NOTHING);
 }
