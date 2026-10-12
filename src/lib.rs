@@ -201,7 +201,8 @@
 //! |---|---|
 //! | [`Path<T>`](extract::Path), [`Query<T>`](extract::Query): parameters and query | `&D` / `&mut D`: the load's data; `&RouteError` in error pages |
 //! | [`State<T>`](extract::State): the app state | [`State<&T>`](extract::State): the app state |
-//! | [`Parent`](extract::Parent): the data of the layouts above | [`Nav`](extract::Nav): links and navigation |
+//! | [`Parent`](extract::Parent): the data of the layouts above | [`LayoutData<T>`](extract::LayoutData): the data of the layouts above |
+//! | | [`Nav`](extract::Nav): links and navigation |
 //! | [`Request`]: the url and parameters | [`PageState<T>`](extract::PageState), [`Snapshot<T>`](extract::Snapshot), [`PersistentState<T>`](extract::PersistentState): [view state](#view-state) |
 //! | | [`Scroll`](extract::Scroll), [`HistoryState<&T>`](extract::HistoryState), [`Navigation`], [`Request`] |
 //! | | [`Remote<S>`](extract::Remote): [queries and commands](#queries-and-commands) |

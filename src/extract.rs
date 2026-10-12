@@ -23,6 +23,7 @@
 //! |---|---|
 //! | `&mut D` / `&D` | the data the `load` returned (`()` without one), checked at compile time |
 //! | `&RouteError` | the error, in error pages |
+//! | [`LayoutData<T>`] | the data of the nearest layout around the view that loaded a `T` |
 //! | [`State<&T>`](State) | the app state, or any part of it that implements [`FromRef`], borrowed |
 //! | [`Nav`] | the router: links, `goto`, back/forward, loading, invalidation, shallow routing, blocking |
 //! | [`Scroll`] | the page's scroll area, whose position the router restores |
@@ -61,6 +62,7 @@
 //! [`RouteError`]: crate::RouteError
 
 mod history_state;
+mod layout_data;
 mod nav;
 pub(crate) mod parent;
 mod path;
@@ -76,6 +78,7 @@ use crate::page::ViewContext;
 pub use crate::remote::Remote;
 use crate::request::Request;
 pub use history_state::HistoryState;
+pub use layout_data::LayoutData;
 pub use nav::Nav;
 pub(crate) use nav::{NavAction, NavState};
 pub use parent::Parent;
@@ -143,6 +146,10 @@ pub trait FromRequest<S>: Sized {
 pub trait FromView<S: 'static, D>: Sized {
     type Item<'f>;
 
+    /// Whether this takes the view's data mutably (`&mut D`).
+    #[doc(hidden)]
+    const BORROWS_DATA_MUT: bool = false;
+
     fn from_view<'f>(cx: &'f ViewContext<'_, S>) -> Self::Item<'f>;
 }
 
@@ -175,8 +182,10 @@ impl<S: 'static, D> FromView<S, D> for Navigation {
 impl<S: 'static, D: 'static> FromView<S, D> for &mut D {
     type Item<'f> = &'f mut D;
 
+    const BORROWS_DATA_MUT: bool = true;
+
     fn from_view<'f>(cx: &'f ViewContext<'_, S>) -> &'f mut D {
-        downcast(cx.take_data())
+        cx.take_data_mut().downcast_mut().expect(MISMATCH)
     }
 }
 
@@ -185,11 +194,8 @@ impl<S: 'static, D: 'static> FromView<S, D> for &D {
     type Item<'f> = &'f D;
 
     fn from_view<'f>(cx: &'f ViewContext<'_, S>) -> &'f D {
-        downcast(cx.take_data())
+        cx.take_data().downcast_ref().expect(MISMATCH)
     }
 }
 
-fn downcast<D: 'static>(data: &mut dyn core::any::Any) -> &mut D {
-    data.downcast_mut()
-        .expect("egui-kit: the data does not match the view (this is a bug)")
-}
+const MISMATCH: &str = "egui-kit: the data does not match the view (this is a bug)";

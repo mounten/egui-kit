@@ -48,7 +48,7 @@ pub use handler::Handler;
 pub(crate) use handler::{ErasedHandler, LocalBoxFuture, erase, unit};
 pub use layout::Layout;
 pub(crate) use loader::{ErasedView, LayoutReset, Loader, NodeId};
-pub(crate) use view::Frame;
+pub(crate) use view::{Frame, ViewData};
 pub use view::{LayoutView, Outlet, View, ViewContext};
 
 /// A page: an optional `load` handler and a [view](View).
