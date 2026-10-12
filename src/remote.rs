@@ -67,7 +67,9 @@
 //! ```
 //!
 //! Like `load`s, queries and commands are polled by the router, so no async runtime is needed,
-//! and their futures don't have to be `Send`.
+//! and their futures don't have to be `Send`. Natively, clients built on Tokio need its runtime
+//! entered around [`RouterApp::ui`](crate::RouterApp::ui); see
+//! [Async runtimes](crate#async-runtimes).
 //!
 //! # Caching
 //!
