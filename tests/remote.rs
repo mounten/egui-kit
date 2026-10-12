@@ -325,8 +325,24 @@ fn commands_report_their_state_and_refresh_on_success() {
         let increment = remote.command::<Increment>();
         assert_eq!(increment.error(), Some(RouteError::new(409, "nope")));
         assert_eq!(increment.take_output(), None);
+        assert_eq!(increment.take_error(), Some(RouteError::new(409, "nope")));
+        assert_eq!(increment.take_error(), None);
+        assert_eq!(increment.error(), Some(RouteError::new(409, "nope")));
     });
     assert_eq!(frame(&ctx, &mut app), NOTHING);
+
+    // `take_result` reports each run once, whatever its outcome.
+    act(&app, |remote, _| {
+        remote.command::<Increment>().run(Increment { fail: false });
+    });
+    frame(&ctx, &mut app);
+    act(&app, |remote, _| {
+        let increment = remote.command::<Increment>();
+        assert_eq!(increment.error(), None);
+        assert_eq!(increment.take_result(), Some(Ok(2)));
+        assert_eq!(increment.take_result(), None);
+    });
+    frame(&ctx, &mut app);
 }
 
 #[test]
