@@ -233,6 +233,8 @@ trait Entry {
 struct Registry {
     /// Every query's state, to invalidate them.
     entries: Vec<Weak<dyn Entry>>,
+    /// How many entries were left after the dropped ones were last pruned.
+    pruned_len: usize,
     /// The state of keyed queries, by value type and key.
     cache: HashMap<(TypeId, Id), Rc<dyn Entry>>,
     /// The app's context, to wake it up when a query or command finished.
@@ -247,6 +249,14 @@ thread_local! {
 
 fn with_registry<R>(f: impl FnOnce(&mut Registry) -> R) -> R {
     REGISTRY.with(|registry| f(&mut registry.borrow_mut()))
+}
+
+impl Registry {
+    /// Forgets the entries of the dropped queries.
+    fn prune(&mut self) {
+        self.entries.retain(|entry| entry.strong_count() > 0);
+        self.pruned_len = self.entries.len();
+    }
 }
 
 fn context() -> Option<egui::Context> {
@@ -292,7 +302,7 @@ pub(crate) fn take_invalidated() -> Vec<String> {
 /// Marks the queries that depend on what `invalidation` hits for a refetch.
 pub(crate) fn invalidate_queries(invalidation: &Invalidation) {
     let entries: Vec<_> = with_registry(|registry| {
-        registry.entries.retain(|entry| entry.strong_count() > 0);
+        registry.prune();
         registry.entries.iter().filter_map(Weak::upgrade).collect()
     });
     for entry in entries {
@@ -300,11 +310,16 @@ pub(crate) fn invalidate_queries(invalidation: &Invalidation) {
     }
 }
 
-/// Drops the cache entries that no query used for long enough.
+/// Drops the cache entries that no query used for long enough, and forgets the dropped
+/// queries.
 pub(crate) fn end_frame() {
     let now = Instant::now();
     // Dropped outside of the registry: dropping a query's state aborts its fetch.
     let _expired: Vec<_> = with_registry(|registry| {
+        // Once the entries doubled, so that pruning takes amortized constant time per query.
+        if registry.entries.len() > (2 * registry.pruned_len).max(PRUNE_AT) {
+            registry.prune();
+        }
         let keys: Vec<_> = registry
             .cache
             .iter()
@@ -317,5 +332,23 @@ pub(crate) fn end_frame() {
     });
 }
 
+/// How many query entries there may be before [`end_frame`] first prunes them.
+const PRUNE_AT: usize = 64;
+
 /// How long a keyed query's value is kept by default once no query uses it.
 const CACHE_FOR: Duration = Duration::from_mins(5);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dropped_queries_are_pruned_without_invalidations() {
+        for _ in 0..1000 {
+            drop(query(|| async { Ok::<_, ()>(()) }));
+            end_frame();
+        }
+        let len = with_registry(|registry| registry.entries.len());
+        assert!(len <= PRUNE_AT, "{len} entries");
+    }
+}
