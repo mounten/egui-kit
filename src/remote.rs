@@ -76,13 +76,15 @@
 //! A query runs the first time a view reads it, and its result is kept for as long as views keep
 //! reading it: it is dropped after a frame in which no view did. While it reruns (after an
 //! [invalidation](crate::extract::Nav::invalidate) or a [refresh](Remote::refresh)),
-//! [`QueryState::current`] still has the previous value.
+//! [`QueryState::current`] still has the previous value. A query that [refetches
+//! periodically](Query::refetch_every) reruns the same way.
 
 use core::any::{Any, TypeId};
 use core::cell::RefCell;
 use core::future::Future;
 use core::marker::PhantomData;
 use core::task::Poll;
+use core::time::Duration;
 use std::collections::HashMap;
 use std::fmt;
 use std::rc::Rc;
@@ -109,6 +111,13 @@ pub trait Query<S>: Clone + PartialEq + 'static {
     fn depends(&self) -> Vec<String> {
         Vec::new()
     }
+
+    /// Reruns the query this long after its last run finished, for as long as views read it:
+    /// for data that changes elsewhere, like an inbox. `None` (the default) only reruns it when
+    /// it is invalidated or [refreshed](Remote::refresh).
+    fn refetch_every(&self) -> Option<Duration> {
+        None
+    }
 }
 
 /// An async mutation that views start with [`CommandHandle::run`].
@@ -132,6 +141,9 @@ struct QueryEntry {
     /// The query, to compare with the ones views read.
     query: Box<dyn Any>,
     keys: Vec<String>,
+    refetch_every: Option<Duration>,
+    /// When the last run finished, in egui's time.
+    finished_at: Option<f64>,
     /// The last value it fetched.
     value: Option<Rc<dyn Any>>,
     /// Whether the last run failed.
@@ -166,6 +178,8 @@ impl RemoteStore {
                 queries.push(QueryEntry {
                     query: Box::new(query.clone()),
                     keys: query.depends(),
+                    refetch_every: query.refetch_every(),
+                    finished_at: None,
                     value: None,
                     error: None,
                     future: None,
@@ -176,6 +190,17 @@ impl RemoteStore {
             });
         let entry = &mut queries[index];
         entry.read = true;
+        let now = ctx.input(|i| i.time);
+        if let (Some(every), Some(finished_at), None) =
+            (entry.refetch_every, entry.finished_at, &entry.future)
+        {
+            let due = finished_at + every.as_secs_f64();
+            if now >= due {
+                entry.stale = true;
+            } else {
+                ctx.request_repaint_after_secs((due - now) as f32);
+            }
+        }
         if entry.stale {
             entry.stale = false;
             let future = query.clone().run(state.clone());
@@ -188,6 +213,10 @@ impl RemoteStore {
             && let Poll::Ready(result) = exec::poll_once(ctx, future.as_mut())
         {
             entry.future = None;
+            entry.finished_at = Some(now);
+            if let Some(every) = entry.refetch_every {
+                ctx.request_repaint_after(every);
+            }
             match result {
                 Ok(value) => {
                     entry.value = Some(value);
