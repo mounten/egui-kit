@@ -9,7 +9,6 @@ use std::fmt;
 
 use super::FromView;
 use crate::page::ViewContext;
-use crate::remote::CommandSlots;
 
 /// Values by type. A value is taken out while a view uses it and put back afterwards, so a view
 /// can hold several types at once without borrowing the map.
@@ -44,12 +43,11 @@ impl TypeMap {
     }
 }
 
-/// The state of one page instance or layout: its [`PageState`]s, [`Snapshot`]s and commands.
+/// The state of one page instance or layout: its [`PageState`]s and [`Snapshot`]s.
 #[derive(Default)]
 pub(crate) struct ViewStore {
     pub(crate) page: TypeMap,
     pub(crate) snapshot: TypeMap,
-    pub(crate) commands: CommandSlots,
 }
 
 impl ViewStore {
@@ -58,7 +56,6 @@ impl ViewStore {
         Self {
             page: TypeMap::default(),
             snapshot: left.snapshot.take_all(),
-            commands: CommandSlots::default(),
         }
     }
 }

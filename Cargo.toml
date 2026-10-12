@@ -14,19 +14,30 @@ categories = ["gui", "wasm"]
 [workspace]
 members = ["example"]
 
+[features]
+default = ["remote"]
+# Queries and commands (`egui_kit::remote`), run on a Tokio runtime natively.
+remote = ["dep:tokio", "dep:wasm-bindgen-futures", "dep:web-time"]
+
 [dependencies]
 egui = { version = "0.36", default-features = false }
 percent-encoding = "2.3"
 serde = "1.0"
 serde_urlencoded = "0.7"
+web-time = { version = "1.1", optional = true }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tokio = { version = "1.40", default-features = false, features = ["rt-multi-thread"], optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 js-sys = "0.3"
 wasm-bindgen = "0.2"
+wasm-bindgen-futures = { version = "0.4", optional = true }
 web-sys = { version = "0.3", features = ["Document", "Element", "EventTarget", "FocusOptions", "History", "HtmlElement", "Location", "MediaQueryList", "MouseEvent", "Node", "PopStateEvent", "Window"] }
 
 [dev-dependencies]
 egui = "0.36"
+tokio = { version = "1.40", features = ["sync", "time"] }
 serde = { version = "1.0", features = ["derive"] }
 
 [lints]

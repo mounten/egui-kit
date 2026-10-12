@@ -11,7 +11,6 @@ use crate::extract::{Nav, NavState, PageScroll, ViewStore};
 use crate::load::Loaded;
 use crate::navigation::{Direction, Navigation};
 use crate::page::{ErasedView, Frame, NodeId, Outlet, Page, ViewContext, ViewData};
-use crate::remote::RemoteStore;
 use crate::request::Request;
 use crate::router::Level;
 use crate::transition::{OutletTransition, TransitionHandle, TransitionState};
@@ -108,7 +107,6 @@ impl<S> Mounted<S> {
         ui: &mut Ui,
         state: &S,
         nav: &RefCell<NavState>,
-        remote: &RemoteStore,
         from: usize,
         handoff: Option<Handoff<'_>>,
     ) {
@@ -138,7 +136,6 @@ impl<S> Mounted<S> {
             scroll,
             outgoing: from > 0,
             nav,
-            remote,
         };
         let above: &[Option<Loaded>] = &layouts[..depth];
         let mut leaf = |ui: &mut Ui| match content {
@@ -177,14 +174,13 @@ pub(crate) fn render<S>(
     transition: Option<&mut Transition<S>>,
     state: &S,
     nav: &RefCell<NavState>,
-    remote: &RemoteStore,
 ) {
     let Some((transition, depth)) = transition.and_then(|transition| {
         transition.state.claimed.set(false);
         let depth = transition_owner(mounted, &transition.previous)?;
         Some((transition, depth))
     }) else {
-        return mounted.render(ui, state, nav, remote, 0, None);
+        return mounted.render(ui, state, nav, 0, None);
     };
 
     // The outgoing page renders below the transitioning layout, without navigation powers.
@@ -202,7 +198,6 @@ pub(crate) fn render<S>(
             ui,
             state,
             &RefCell::new(NavState::default()),
-            remote,
             depth + 1,
             None,
         );
@@ -217,7 +212,7 @@ pub(crate) fn render<S>(
             navigation: &navigation,
         },
     };
-    mounted.render(ui, state, nav, remote, 0, Some(handoff));
+    mounted.render(ui, state, nav, 0, Some(handoff));
 }
 
 /// The layout that animates a page change: the innermost one shared by both pages, among those

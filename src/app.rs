@@ -16,7 +16,6 @@ use crate::extract::{NavAction, NavState};
 use crate::history::{EntryKey, History, HistoryEntry};
 use crate::load::{Invalidation, Job};
 use crate::navigation::{Direction, GotoOptions, Navigation};
-use crate::remote::RemoteStore;
 use crate::render::{self, Mounted, Transition};
 use crate::request::Request;
 use crate::router::RouteTable;
@@ -38,8 +37,6 @@ pub struct RouterApp<S> {
     session: Session,
     /// Shared with the views during a frame.
     nav: NavState,
-    /// The queries' cache and the commands in flight.
-    remote: RemoteStore,
 
     mounted: Option<Mounted<S>>,
     transition: Option<Transition<S>>,
@@ -77,7 +74,6 @@ impl<S: Clone + 'static> RouterApp<S> {
                 preload_on_hover: true,
                 ..NavState::default()
             },
-            remote: RemoteStore::default(),
             mounted: None,
             transition: None,
             pending: None,
@@ -111,12 +107,6 @@ impl<S: Clone + 'static> RouterApp<S> {
 
     pub fn state(&self) -> &S {
         &self.state
-    }
-
-    /// A handle to run futures like commands from outside the views, see
-    /// [`Spawner`](crate::remote::Spawner).
-    pub fn spawner(&self) -> crate::remote::Spawner {
-        self.remote.spawner()
     }
 
     /// The pattern of the page route that `url` matches, e.g. `/blog/{slug}`, or `None` if it
@@ -207,6 +197,10 @@ impl<S: Clone + 'static> RouterApp<S> {
     /// Shows the current page, wrapped in its layouts.
     pub fn ui(&mut self, ui: &mut Ui) {
         let ctx = ui.ctx().clone();
+        #[cfg(feature = "remote")]
+        let _runtime = crate::remote::enter();
+        #[cfg(feature = "remote")]
+        crate::remote::begin_frame(&ctx);
 
         #[cfg(not(target_arch = "wasm32"))]
         self.handle_back_forward_input(ui);
@@ -225,14 +219,7 @@ impl<S: Clone + 'static> RouterApp<S> {
         let nav = RefCell::new(core::mem::take(&mut self.nav));
         match &mut self.mounted {
             Some(mounted) => {
-                render::render(
-                    ui,
-                    mounted,
-                    self.transition.as_mut(),
-                    &self.state,
-                    &nav,
-                    &self.remote,
-                );
+                render::render(ui, mounted, self.transition.as_mut(), &self.state, &nav);
             }
             None => {
                 ui.centered_and_justified(|ui| ui.spinner());
@@ -251,7 +238,8 @@ impl<S: Clone + 'static> RouterApp<S> {
             self.transition = None;
         }
 
-        self.remote.end_frame(&ctx);
+        #[cfg(feature = "remote")]
+        crate::remote::end_frame();
 
         let actions = core::mem::take(&mut self.nav.actions);
         if !actions.is_empty() {
@@ -260,8 +248,6 @@ impl<S: Clone + 'static> RouterApp<S> {
             }
             ctx.request_repaint();
         }
-        // Also drives the commands the views just started, so those that are done right away
-        // show their result in the next frame.
         self.poll(&ctx);
     }
 
@@ -303,14 +289,17 @@ impl<S: Clone + 'static> RouterApp<S> {
         }
     }
 
-    /// Drives the commands, the preloads and the pending navigation; commits the latter when
-    /// done. Loads that complete synchronously are committed within the same frame, so they
-    /// never flash a loading state.
+    /// Applies the invalidations of commands, drives the preloads and the pending navigation;
+    /// commits the latter when done. Loads that complete synchronously are committed within the
+    /// same frame, so they never flash a loading state.
     fn poll(&mut self, ctx: &egui::Context) {
-        let refreshes = self.remote.poll_commands(ctx);
-        if !refreshes.is_empty() {
-            self.invalidate_with(Invalidation::Keys(refreshes));
-            ctx.request_repaint();
+        #[cfg(feature = "remote")]
+        {
+            let invalidated = crate::remote::take_invalidated();
+            if !invalidated.is_empty() {
+                self.invalidate_with(Invalidation::Keys(invalidated));
+                ctx.request_repaint();
+            }
         }
         for job in &mut self.preloads {
             job.poll(ctx);
@@ -381,7 +370,8 @@ impl<S: Clone + 'static> RouterApp<S> {
 
     /// Reruns the loads and queries that `invalidation` hits.
     fn invalidate_with(&mut self, invalidation: Invalidation) {
-        self.remote.invalidate(&invalidation);
+        #[cfg(feature = "remote")]
+        crate::remote::invalidate_queries(&invalidation);
         self.reload(invalidation);
     }
 

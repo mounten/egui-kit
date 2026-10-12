@@ -1,526 +1,252 @@
-//! Queries and commands: caching, dropping unread queries, invalidation, and command state.
+//! Queries and commands: fetching, caching, refreshing, aborting, and invalidating loads.
+#![cfg(feature = "remote")]
 
-use core::cell::{Cell, RefCell};
-use core::future::{Future, poll_fn, ready};
-use core::task::Poll;
+use core::cell::Cell;
+use core::future::pending;
+use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use core::time::Duration;
 use std::rc::Rc;
+use std::sync::Arc;
+use std::time::Instant;
 
 use egui::Ui;
-use egui_kit::extract::{Nav, Remote, State};
-use egui_kit::page::{Layout, Outlet, Page};
-use egui_kit::remote::{Command, Query, Running};
-use egui_kit::{MemoryHistory, Rejection, RouteError, Router, RouterApp};
+use egui_kit::extract::State;
+use egui_kit::page::Page;
+use egui_kit::remote::{self, Command, Query, QueryState};
+use egui_kit::{MemoryHistory, Rejection, Router, RouterApp};
+use tokio::sync::watch;
 
-/// No runs.
-const NOTHING: [&str; 0] = [];
-
-type Action = Box<dyn FnOnce(Remote<'_, AppState>, Nav<'_>)>;
-
-#[derive(Clone)]
-struct AppState {
-    /// What ran: queries, commands and loads.
-    runs: Rc<RefCell<Vec<String>>>,
-    /// What the page view saw of `Count`.
-    seen: Rc<RefCell<Vec<String>>>,
-    actions: Rc<RefCell<Vec<Action>>>,
-    count: Rc<Cell<u32>>,
-    /// Queries and commands wait while it's closed.
-    gate: Rc<Cell<bool>>,
-    /// Whether the views read the queries.
-    show: Rc<Cell<bool>>,
+/// Waits for queries and commands to finish on the runtime's threads.
+fn wait_until(mut done: impl FnMut() -> bool) {
+    let start = Instant::now();
+    while !done() {
+        assert!(
+            start.elapsed() < Duration::from_secs(5),
+            "timed out waiting for a fetch"
+        );
+        std::thread::sleep(Duration::from_millis(2));
+    }
 }
 
-impl Default for AppState {
-    fn default() -> Self {
-        Self {
-            runs: Rc::default(),
-            seen: Rc::default(),
-            actions: Rc::default(),
-            count: Rc::default(),
-            gate: Rc::new(Cell::new(true)),
-            show: Rc::new(Cell::new(true)),
+/// A query whose value counts its fetches, and whose even fetches fail if `fail_even`.
+fn counting(fetches: &Arc<AtomicU32>, fail_even: bool) -> Query<u32, String> {
+    let fetches = Arc::clone(fetches);
+    remote::query(move || {
+        let n = fetches.fetch_add(1, Ordering::SeqCst) + 1;
+        async move {
+            if fail_even && n.is_multiple_of(2) {
+                Err(format!("fetch {n} failed"))
+            } else {
+                Ok(n)
+            }
+        }
+    })
+}
+
+fn data(query: &Query<u32, String>) -> Option<u32> {
+    query.data().map(|value| *value)
+}
+
+#[test]
+fn queries_fetch_on_their_first_read() {
+    let fetches = Arc::default();
+    let query = counting(&fetches, false);
+    assert_eq!(fetches.load(Ordering::SeqCst), 0, "not before it is read");
+    assert!(matches!(query.state(), QueryState::Loading));
+    wait_until(|| data(&query).is_some());
+    assert!(matches!(query.state(), QueryState::Ready(value) if *value == 1));
+    assert_eq!(query.version(), 1);
+    assert!(!query.is_fetching());
+    assert_eq!(fetches.load(Ordering::SeqCst), 1, "fetched once");
+}
+
+#[test]
+fn refreshing_keeps_the_value_until_the_new_one_arrives() {
+    let fetches = Arc::default();
+    let query = counting(&fetches, false);
+    wait_until(|| data(&query).is_some());
+    query.refresh();
+    assert_eq!(data(&query), Some(1));
+    assert_eq!(fetches.load(Ordering::SeqCst), 2);
+    wait_until(|| data(&query) == Some(2));
+    assert_eq!(query.version(), 2);
+}
+
+#[test]
+fn failed_fetches_keep_the_previous_value() {
+    let fetches = Arc::default();
+    let query = counting(&fetches, true);
+    wait_until(|| data(&query).is_some());
+    query.refresh();
+    wait_until(|| query.error().is_some());
+    assert!(matches!(query.state(), QueryState::Failed(error) if *error == "fetch 2 failed"));
+    assert_eq!(data(&query), Some(1));
+    query.refresh();
+    wait_until(|| data(&query) == Some(3));
+    assert!(query.error().is_none(), "cleared by a successful fetch");
+}
+
+#[test]
+fn keyed_queries_share_one_fetch_and_cache_the_value() {
+    let (first, second) = (Arc::default(), Arc::default());
+    let hour = Duration::from_secs(3600);
+    let a = counting(&first, false).key("shared").stale_after(hour);
+    let b = counting(&second, false).key("shared").stale_after(hour);
+    a.state();
+    b.state();
+    wait_until(|| data(&b).is_some());
+    assert_eq!(data(&a), Some(1));
+    assert_eq!(
+        second.load(Ordering::SeqCst),
+        0,
+        "the first query's function fetches"
+    );
+    assert_eq!(first.load(Ordering::SeqCst), 1, "once for both");
+
+    drop((a, b));
+    let c = counting(&second, false).key("shared").stale_after(hour);
+    assert_eq!(data(&c), Some(1), "cached");
+    assert!(!c.is_fetching(), "fresh enough");
+}
+
+#[test]
+fn new_queries_refetch_stale_cached_values() {
+    let fetches = Arc::default();
+    let a = counting(&fetches, false).key("stale");
+    wait_until(|| data(&a).is_some());
+    let b = counting(&fetches, false).key("stale");
+    assert_eq!(
+        data(&b),
+        Some(1),
+        "the cached value is shown while it refetches"
+    );
+    assert_eq!(fetches.load(Ordering::SeqCst), 2);
+    wait_until(|| data(&a) == Some(2));
+    // Reading again doesn't refetch.
+    data(&b);
+    assert_eq!(fetches.load(Ordering::SeqCst), 2);
+}
+
+#[test]
+fn queries_refetch_periodically() {
+    let fetches = Arc::default();
+    let query = counting(&fetches, false).refetch_every(Duration::from_millis(10));
+    wait_until(|| data(&query).is_some_and(|n| n >= 3));
+}
+
+#[test]
+fn dropping_a_query_aborts_its_fetch() {
+    struct Guard(Arc<AtomicBool>);
+
+    impl Drop for Guard {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::SeqCst);
         }
     }
-}
 
-impl AppState {
-    fn ran(&self, what: impl Into<String>) {
-        self.runs.borrow_mut().push(what.into());
-    }
-
-    async fn gate(&self) {
-        poll_fn(|_| {
-            if self.gate.get() {
-                Poll::Ready(())
-            } else {
-                Poll::Pending
+    let (started, dropped) = (Arc::new(AtomicBool::new(false)), Arc::default());
+    let query: Query<(), String> = {
+        let (started, dropped) = (Arc::clone(&started), Arc::clone(&dropped));
+        remote::query(move || {
+            let guard = Guard(Arc::clone(&dropped));
+            let started = Arc::clone(&started);
+            async move {
+                let _guard = guard;
+                started.store(true, Ordering::SeqCst);
+                pending::<Result<(), String>>().await
             }
         })
-        .await;
-    }
+    };
+    query.state();
+    wait_until(|| started.load(Ordering::SeqCst));
+    drop(query);
+    wait_until(|| dropped.load(Ordering::SeqCst));
 }
 
-#[derive(Clone, PartialEq)]
-struct Count;
+#[test]
+fn commands_report_whether_they_are_pending_and_how_they_ended() {
+    let command: Command<u32, String> = remote::command();
+    let (open, mut gate) = watch::channel(false);
+    command.run(async move {
+        gate.wait_for(|open| *open).await.ok();
+        Ok(5)
+    });
+    assert!(command.is_pending());
+    assert!(command.result().is_none());
+    open.send(true).unwrap();
+    wait_until(|| !command.is_pending());
+    assert_eq!(command.output().as_deref(), Some(&5));
+    assert_eq!(command.take_result(), Some(Ok(5)));
+    assert_eq!(command.take_result(), None, "taken");
 
-impl Query<AppState> for Count {
-    type Output = u32;
-
-    async fn run(self, state: AppState) -> Result<u32, RouteError> {
-        state.ran("count");
-        state.gate().await;
-        Ok(state.count.get())
-    }
-
-    fn depends(&self) -> Vec<String> {
-        vec!["count".into()]
-    }
+    command.run(async { Err("no".to_owned()) });
+    wait_until(|| !command.is_pending());
+    assert_eq!(command.error().as_deref().map(String::as_str), Some("no"));
+    command.run(pending());
+    assert!(command.result().is_none(), "forgotten when it runs again");
 }
 
-#[derive(Clone, PartialEq)]
-struct Double(u32);
-
-impl Query<AppState> for Double {
-    type Output = u32;
-
-    fn run(self, state: AppState) -> impl Future<Output = Result<u32, RouteError>> {
-        state.ran(format!("double:{}", self.0));
-        ready(Ok(self.0 * 2))
-    }
+#[derive(Clone, Default)]
+struct AppState {
+    loads: Rc<Cell<u32>>,
 }
 
-/// Polls `count` every 5 seconds.
-#[derive(Clone, PartialEq)]
-struct Inbox;
-
-impl Query<AppState> for Inbox {
-    type Output = u32;
-
-    async fn run(self, state: AppState) -> Result<u32, RouteError> {
-        state.ran("inbox");
-        state.gate().await;
-        Ok(state.count.get())
-    }
-
-    fn refetch_every(&self) -> Option<Duration> {
-        Some(Duration::from_secs(5))
-    }
-}
-
-/// Kept for 10 seconds without readers.
-#[derive(Clone, PartialEq)]
-struct Kept;
-
-impl Query<AppState> for Kept {
-    type Output = u32;
-
-    fn run(self, state: AppState) -> impl Future<Output = Result<u32, RouteError>> {
-        state.ran("kept");
-        ready(Ok(state.count.get()))
-    }
-
-    fn keep_unread(&self) -> Duration {
-        Duration::from_secs(10)
-    }
-}
-
-struct Increment {
-    fail: bool,
-}
-
-impl Command<AppState> for Increment {
-    type Output = u32;
-
-    async fn run(self, state: AppState) -> Result<u32, RouteError> {
-        state.ran("increment");
-        state.gate().await;
-        if self.fail {
-            return Err(RouteError::new(409, "nope"));
-        }
-        state.count.set(state.count.get() + 1);
-        Ok(state.count.get())
-    }
-
-    fn refreshes(&self) -> Vec<String> {
-        vec!["count".into()]
-    }
-}
-
-async fn home_load(State(state): State<AppState>) -> Result<(), Rejection> {
-    state.ran("load");
+async fn load(State(state): State<AppState>) -> Result<(), Rejection> {
+    state.loads.set(state.loads.get() + 1);
     Ok(())
-}
-
-fn layout(
-    ui: &mut Ui,
-    mut outlet: Outlet<'_>,
-    State(state): State<&AppState>,
-    remote: Remote<'_, AppState>,
-    nav: Nav<'_>,
-) {
-    if state.show.get() {
-        remote.query(Count);
-    }
-    let actions = core::mem::take(&mut *state.actions.borrow_mut());
-    for action in actions {
-        action(remote, nav);
-    }
-    outlet.show(ui);
-}
-
-fn home(_: &mut Ui, State(state): State<&AppState>, remote: Remote<'_, AppState>) {
-    if !state.show.get() {
-        return;
-    }
-    let count = remote.query(Count);
-    state.seen.borrow_mut().push(format!(
-        "{:?}{}",
-        count.current(),
-        if count.is_loading() { " loading" } else { "" }
-    ));
-    for n in [1, 2, 1] {
-        let doubled = remote.query(Double(n));
-        assert_eq!(doubled.current(), Some(&(n * 2)), "ready in the same frame");
-    }
 }
 
 fn app() -> RouterApp<AppState> {
     Router::new()
-        .layout(Layout::new(layout))
-        .page("/", Page::with_load(home_load, home).depends("count"))
-        .page("/other", Page::new(|_: &mut Ui| {}))
+        .page("/", Page::with_load(load, |_: &mut Ui| {}).depends("posts"))
         .with_state_and_history(AppState::default(), MemoryHistory::new("/"))
 }
 
-/// Runs a frame; returns what ran.
-fn frame(ctx: &egui::Context, app: &mut RouterApp<AppState>) -> Vec<String> {
+fn frame(ctx: &egui::Context, app: &mut RouterApp<AppState>) {
     let mut output = ctx.run_ui(Default::default(), |ui| app.ui(ui));
     output.textures_delta.clear();
-    core::mem::take(&mut *app.state().runs.borrow_mut())
-}
-
-fn seen(app: &RouterApp<AppState>) -> Vec<String> {
-    core::mem::take(&mut *app.state().seen.borrow_mut())
-}
-
-fn act(app: &RouterApp<AppState>, action: impl FnOnce(Remote<'_, AppState>, Nav<'_>) + 'static) {
-    app.state().actions.borrow_mut().push(Box::new(action));
 }
 
 #[test]
-fn queries_are_shared_by_value_and_ready_in_the_same_frame() {
-    let ctx = egui::Context::default();
-    let mut app = app();
-    // The layout and the page read `Count`, the page reads `Double(1)` twice: one run each.
-    assert_eq!(
-        frame(&ctx, &mut app),
-        ["load", "count", "double:1", "double:2"]
-    );
-    assert_eq!(seen(&app), ["Some(0)"]);
-    assert_eq!(frame(&ctx, &mut app), NOTHING);
-    assert_eq!(seen(&app), ["Some(0)"]);
-}
-
-#[test]
-fn unread_queries_are_dropped() {
+fn commands_and_invalidate_refresh_loads_and_queries() {
     let ctx = egui::Context::default();
     let mut app = app();
     frame(&ctx, &mut app);
-    app.state().show.set(false);
-    assert_eq!(frame(&ctx, &mut app), NOTHING);
-    app.state().show.set(true);
-    assert_eq!(frame(&ctx, &mut app), ["count", "double:1", "double:2"]);
+    assert_eq!(app.state().loads.get(), 1);
+    let fetches = Arc::default();
+    let query = counting(&fetches, false).depends("posts");
+    wait_until(|| data(&query).is_some());
+
+    let publish: Command<(), String> = remote::command().refreshes("posts");
+    publish.run(async { Ok(()) });
+    wait_until(|| !publish.is_pending());
+    frame(&ctx, &mut app);
+    assert_eq!(app.state().loads.get(), 2, "the load reran");
+    wait_until(|| data(&query) == Some(2));
+
+    // A failed run refreshes nothing.
+    publish.run(async { Err("no".to_owned()) });
+    wait_until(|| !publish.is_pending());
+    frame(&ctx, &mut app);
+    assert_eq!(app.state().loads.get(), 2);
+
+    remote::invalidate("posts");
+    frame(&ctx, &mut app);
+    assert_eq!(app.state().loads.get(), 3);
+    wait_until(|| data(&query) == Some(3));
 }
 
 #[test]
-fn invalidation_reruns_queries_keeping_the_previous_value() {
+fn unused_cache_entries_expire() {
     let ctx = egui::Context::default();
     let mut app = app();
+    let fetches = Arc::default();
+    let query = counting(&fetches, false)
+        .key("expiring")
+        .cache_for(Duration::ZERO);
+    wait_until(|| data(&query).is_some());
+    drop(query);
     frame(&ctx, &mut app);
-    seen(&app);
-
-    app.state().gate.set(false);
-    app.state().count.set(5);
-    app.invalidate("count");
-    assert_eq!(frame(&ctx, &mut app), ["load", "count"]);
-    assert_eq!(seen(&app), ["Some(0) loading"]);
-
-    app.state().gate.set(true);
-    assert_eq!(frame(&ctx, &mut app), NOTHING);
-    assert_eq!(seen(&app), ["Some(5)"]);
-
-    // A new value has a new version, and is shared with the cache.
-    let versions = Rc::new(RefCell::new(Vec::new()));
-    let read_version = |app: &RouterApp<AppState>| {
-        let versions = Rc::clone(&versions);
-        act(app, move |remote, _| {
-            let count = remote.query(Count);
-            let rc = count.rc().unwrap();
-            assert!(core::ptr::eq(Rc::as_ptr(&rc), count.current().unwrap()));
-            versions.borrow_mut().push(count.version());
-        });
-    };
-    read_version(&app);
-    frame(&ctx, &mut app);
-    read_version(&app);
-    frame(&ctx, &mut app);
-    app.invalidate("count");
-    read_version(&app);
-    frame(&ctx, &mut app);
-    let versions = versions.borrow();
-    assert!(
-        versions[0] > 0 && versions[0] == versions[1] && versions[2] > versions[1],
-        "{versions:?}"
-    );
-
-    // Other keys leave it alone.
-    app.invalidate("other");
-    assert_eq!(frame(&ctx, &mut app), NOTHING);
-
-    // Refreshed in the layout: the page's read later in the frame reruns it.
-    act(&app, |remote, _| remote.refresh(&Count));
-    assert_eq!(frame(&ctx, &mut app), ["count"]);
-    assert_eq!(frame(&ctx, &mut app), NOTHING);
-}
-
-#[test]
-fn commands_report_their_state_and_refresh_on_success() {
-    let ctx = egui::Context::default();
-    let mut app = app();
-    frame(&ctx, &mut app);
-    seen(&app);
-
-    app.state().gate.set(false);
-    act(&app, |remote, _| {
-        let increment = remote.command::<Increment>();
-        increment.run(Increment { fail: false });
-        assert!(increment.is_pending());
-    });
-    assert_eq!(frame(&ctx, &mut app), ["increment"]);
-    act(&app, |remote, _| {
-        assert!(remote.command::<Increment>().is_pending());
-    });
-    assert_eq!(frame(&ctx, &mut app), NOTHING);
-
-    // Done: it refreshes the page's load and the query.
-    app.state().gate.set(true);
-    assert_eq!(frame(&ctx, &mut app), ["load", "count"]);
-    act(&app, |remote, _| {
-        let increment = remote.command::<Increment>();
-        assert!(!increment.is_pending());
-        assert_eq!(increment.take_output(), Some(1));
-        assert_eq!(increment.take_output(), None);
-        assert_eq!(increment.error(), None);
-    });
-    frame(&ctx, &mut app);
-    assert_eq!(seen(&app).last().map(String::as_str), Some("Some(1)"));
-
-    // A failure is kept until the next run, and refreshes nothing.
-    act(&app, |remote, _| {
-        remote.command::<Increment>().run(Increment { fail: true });
-    });
-    assert_eq!(frame(&ctx, &mut app), ["increment"]);
-    act(&app, |remote, _| {
-        let increment = remote.command::<Increment>();
-        assert_eq!(increment.error(), Some(RouteError::new(409, "nope")));
-        assert_eq!(increment.take_output(), None);
-        assert_eq!(increment.take_error(), Some(RouteError::new(409, "nope")));
-        assert_eq!(increment.take_error(), None);
-        assert_eq!(increment.error(), Some(RouteError::new(409, "nope")));
-    });
-    assert_eq!(frame(&ctx, &mut app), NOTHING);
-
-    // `take_result` reports each run once, whatever its outcome.
-    act(&app, |remote, _| {
-        remote.command::<Increment>().run(Increment { fail: false });
-    });
-    frame(&ctx, &mut app);
-    act(&app, |remote, _| {
-        let increment = remote.command::<Increment>();
-        assert_eq!(increment.error(), None);
-        assert_eq!(increment.take_result(), Some(Ok(2)));
-        assert_eq!(increment.take_result(), None);
-    });
-    frame(&ctx, &mut app);
-}
-
-#[test]
-fn commands_complete_after_their_page_is_left() {
-    let ctx = egui::Context::default();
-    let mut app = app();
-    frame(&ctx, &mut app);
-
-    app.state().gate.set(false);
-    act(&app, |remote, nav| {
-        remote.command::<Increment>().run(Increment { fail: false });
-        nav.goto("/other");
-    });
-    assert_eq!(frame(&ctx, &mut app), ["increment"]);
-    assert_eq!(app.url(), Some("/other"));
-
-    app.state().gate.set(true);
-    frame(&ctx, &mut app);
-    assert_eq!(app.state().count.get(), 1);
-}
-
-#[test]
-fn queries_refetch_periodically_while_read() {
-    let ctx = egui::Context::default();
-    let mut app = Router::new()
-        .page(
-            "/",
-            Page::new(
-                |_: &mut Ui, State(state): State<&AppState>, remote: Remote<'_, AppState>| {
-                    if state.show.get() {
-                        let inbox = remote.query(Inbox);
-                        state
-                            .seen
-                            .borrow_mut()
-                            .push(format!("{:?}", inbox.current()));
-                    }
-                },
-            ),
-        )
-        .with_state_and_history(AppState::default(), MemoryHistory::new("/"));
-    let state = app.state().clone();
-    let mut frame_at = |time: f64| {
-        let input = egui::RawInput {
-            time: Some(time),
-            ..Default::default()
-        };
-        let mut output = ctx.run_ui(input, |ui| app.ui(ui));
-        output.textures_delta.clear();
-        let runs = core::mem::take(&mut *state.runs.borrow_mut());
-        (runs, state.seen.borrow_mut().pop().unwrap_or_default())
-    };
-
-    assert_eq!(frame_at(0.0), (vec!["inbox".to_owned()], "Some(0)".into()));
-    assert_eq!(frame_at(4.9).0, NOTHING);
-
-    // Due: it reruns, keeping the previous value meanwhile.
-    state.gate.set(false);
-    state.count.set(3);
-    assert_eq!(frame_at(5.0), (vec!["inbox".to_owned()], "Some(0)".into()));
-    state.gate.set(true);
-    assert_eq!(frame_at(7.0), (vec![], "Some(3)".into()));
-
-    // The next run is due 5 seconds after the last one finished.
-    assert_eq!(frame_at(11.9).0, NOTHING);
-    assert_eq!(frame_at(12.0).0, ["inbox"]);
-}
-
-#[test]
-fn queries_can_be_kept_without_readers() {
-    let ctx = egui::Context::default();
-    let mut app = Router::new()
-        .page(
-            "/",
-            Page::new(
-                |_: &mut Ui, State(state): State<&AppState>, remote: Remote<'_, AppState>| {
-                    if state.show.get() {
-                        remote.query(Kept);
-                    }
-                },
-            ),
-        )
-        .with_state_and_history(AppState::default(), MemoryHistory::new("/"));
-    let state = app.state().clone();
-    let mut frame_at = |time: f64| {
-        let input = egui::RawInput {
-            time: Some(time),
-            ..Default::default()
-        };
-        let mut output = ctx.run_ui(input, |ui| app.ui(ui));
-        output.textures_delta.clear();
-        core::mem::take(&mut *state.runs.borrow_mut())
-    };
-
-    assert_eq!(frame_at(0.0), ["kept"]);
-    state.show.set(false);
-    assert_eq!(frame_at(1.0), NOTHING);
-    assert_eq!(frame_at(9.9), NOTHING);
-    state.show.set(true);
-    assert_eq!(frame_at(10.0), NOTHING, "still cached");
-
-    // Dropped 10 seconds after the last read.
-    state.show.set(false);
-    frame_at(11.0);
-    frame_at(20.0);
-    state.show.set(true);
-    assert_eq!(frame_at(21.0), ["kept"]);
-}
-
-#[test]
-fn keyed_commands_have_their_own_state() {
-    let ctx = egui::Context::default();
-    let mut app = app();
-    frame(&ctx, &mut app);
-
-    app.state().gate.set(false);
-    act(&app, |remote, _| {
-        remote
-            .command_keyed::<Increment>("a")
-            .run(Increment { fail: true });
-    });
-    frame(&ctx, &mut app);
-    act(&app, |remote, _| {
-        assert!(remote.command_keyed::<Increment>("a").is_pending());
-        assert!(!remote.command_keyed::<Increment>("b").is_pending());
-        assert!(!remote.command::<Increment>().is_pending());
-    });
-    frame(&ctx, &mut app);
-
-    app.state().gate.set(true);
-    frame(&ctx, &mut app);
-    act(&app, |remote, _| {
-        assert!(remote.command_keyed::<Increment>("a").error().is_some());
-        assert!(remote.command_keyed::<Increment>("b").error().is_none());
-    });
-    frame(&ctx, &mut app);
-}
-
-#[test]
-fn futures_run_like_commands() {
-    let ctx = egui::Context::default();
-    let mut app = app();
-    frame(&ctx, &mut app);
-
-    // From a view: refreshes on success.
-    let running: Rc<RefCell<Option<Running<u32>>>> = Rc::default();
-    app.state().gate.set(false);
-    let slot = Rc::clone(&running);
-    let state = app.state().clone();
-    act(&app, move |remote, _| {
-        *slot.borrow_mut() = Some(remote.run(&["count"], async move {
-            state.gate().await;
-            state.count.set(7);
-            Ok(7)
-        }));
-    });
-    frame(&ctx, &mut app);
-    let handle = running.borrow_mut().take().unwrap();
-    assert!(handle.is_pending());
-    app.state().gate.set(true);
-    assert_eq!(frame(&ctx, &mut app), ["load", "count"]);
-    assert!(!handle.is_pending());
-    assert_eq!(handle.take_result(), Some(Ok(7)));
-    assert_eq!(handle.take_result(), None);
-
-    // From outside the views, starting another one from inside: failures refresh nothing.
-    let spawner = app.spawner();
-    let inner = spawner.clone();
-    let outer = spawner.run(&["count"], async move {
-        Ok(inner.run(&["count"], async {
-            Err::<(), _>(RouteError::new(500, "inner"))
-        }))
-    });
-    assert_eq!(frame(&ctx, &mut app), ["load", "count"]);
-    let inner = outer.take_result().unwrap().unwrap();
-    frame(&ctx, &mut app);
-    assert_eq!(
-        inner.take_result(),
-        Some(Err(RouteError::new(500, "inner")))
-    );
-    assert_eq!(frame(&ctx, &mut app), NOTHING);
+    let query = counting(&fetches, false).key("expiring");
+    assert_eq!(data(&query), None, "dropped from the cache");
 }

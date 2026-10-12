@@ -853,8 +853,11 @@ dependencies = [
  "percent-encoding",
  "serde",
  "serde_urlencoded",
+ "tokio",
  "wasm-bindgen",
+ "wasm-bindgen-futures",
  "web-sys",
+ "web-time",
 ]
 
 [[package]]

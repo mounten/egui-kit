@@ -1,13 +1,16 @@
 //! The app state. Loads and hooks extract a clone of all of it (`State<AppState>`) or of just the
 //! part they need (`State<Db>`, `State<Session>`), thanks to the `FromRef` impls below; views
-//! borrow it (`State<&AppState>`, `State<&Db>`). Everything shared is behind `Rc`, so the clones
-//! are cheap and see the same data.
+//! borrow it (`State<&AppState>`, `State<&Db>`). Everything shared is behind `Rc` (or `Arc`, for
+//! the database that queries and commands use on other threads), so the clones are cheap and see
+//! the same data.
 
 use core::cell::{Cell, RefCell};
 use std::rc::Rc;
+use std::sync::{Arc, RwLock, RwLockReadGuard};
 
 use egui_kit::ViewTransition;
 use egui_kit::extract::FromRef;
+use egui_kit::remote::Query;
 use serde::{Deserialize, Serialize};
 
 /// Loads that read posts declare this dependency; publishing a post invalidates it.
@@ -19,12 +22,16 @@ pub struct AppState {
     pub session: Session,
     /// Counted by an `after_navigate` callback.
     pub navigations: Rc<Cell<u32>>,
+    /// A query: the top bar and the admin page read it, it's not part of any route's `load`.
+    pub post_count: Query<usize, String>,
 }
 
 impl AppState {
     pub fn new() -> Self {
+        let db = Db::seed();
         Self {
-            db: Db::seed(),
+            post_count: crate::remote::post_count(&db),
+            db,
             session: Session::default(),
             navigations: Rc::default(),
         }
@@ -92,9 +99,9 @@ pub struct Author {
 /// A stand-in for a real backend.
 #[derive(Clone)]
 pub struct Db {
-    posts: Rc<RefCell<Vec<Post>>>,
-    authors: Rc<Vec<Author>>,
-    photos: Rc<Vec<Photo>>,
+    posts: Arc<RwLock<Vec<Post>>>,
+    authors: Arc<Vec<Author>>,
+    photos: Arc<Vec<Photo>>,
 }
 
 impl Db {
@@ -151,19 +158,22 @@ impl Db {
             })
             .collect();
         Self {
-            posts: Rc::new(RefCell::new(posts)),
-            authors: Rc::new(authors),
-            photos: Rc::new(photos),
+            posts: Arc::new(RwLock::new(posts)),
+            authors: Arc::new(authors),
+            photos: Arc::new(photos),
         }
     }
 
+    fn read_posts(&self) -> RwLockReadGuard<'_, Vec<Post>> {
+        self.posts.read().expect("posts lock poisoned")
+    }
+
     pub fn posts(&self) -> Vec<Post> {
-        self.posts.borrow().clone()
+        self.read_posts().clone()
     }
 
     pub fn post(&self, slug: &str) -> Option<Post> {
-        self.posts
-            .borrow()
+        self.read_posts()
             .iter()
             .find(|post| post.slug == slug)
             .cloned()
@@ -179,7 +189,8 @@ impl Db {
         if self.post(&slug).is_some() {
             return None;
         }
-        self.posts.borrow_mut().push(Post {
+        let mut posts = self.posts.write().expect("posts lock poisoned");
+        posts.push(Post {
             slug: slug.clone(),
             title: title.into(),
             author_id,
@@ -209,8 +220,7 @@ impl Db {
 
     pub fn tags(&self) -> Vec<String> {
         let mut tags: Vec<_> = self
-            .posts
-            .borrow()
+            .read_posts()
             .iter()
             .flat_map(|post| post.tags.clone())
             .collect();

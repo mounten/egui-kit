@@ -9,7 +9,6 @@ use egui::Ui;
 use crate::extract::{FromView, Nav, NavState, PageScroll, ViewStore};
 use crate::load::Loaded;
 use crate::navigation::Navigation;
-use crate::remote::RemoteStore;
 use crate::request::Request;
 use crate::transition::TransitionHandle;
 
@@ -25,7 +24,6 @@ pub(crate) struct Frame<'a> {
     /// Whether this is the previous page, drawn while a transition animates it out.
     pub(crate) outgoing: bool,
     pub(crate) nav: &'a RefCell<NavState>,
-    pub(crate) remote: &'a RemoteStore,
 }
 
 /// The data of a view: shared for layouts whose view doesn't take it as `&mut D`, so that the

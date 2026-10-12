@@ -205,7 +205,6 @@
 //! | | [`Nav`](extract::Nav): links and navigation |
 //! | [`Request`]: the url and parameters | [`PageState<T>`](extract::PageState), [`Snapshot<T>`](extract::Snapshot), [`PersistentState<T>`](extract::PersistentState): [view state](#view-state) |
 //! | | [`Scroll`](extract::Scroll), [`HistoryState<&T>`](extract::HistoryState), [`Navigation`], [`Request`] |
-//! | | [`Remote<S>`](extract::Remote): [queries and commands](#queries-and-commands) |
 //!
 //! # Errors and redirects
 //!
@@ -251,20 +250,36 @@
 //! # Queries and commands
 //!
 //! Not all data belongs to a route: a badge in a layout, an autocomplete. And mutations are often
-//! async too, which a view can't `await`. Inspired by SvelteKit's remote functions, a
-//! [`Query`](remote::Query) is async data any view can read, cached by value, and a
-//! [`Command`](remote::Command) an async mutation that a view starts and watches. A command
-//! refreshes the loads and queries that depend on what it changed. Views use both through the
-//! [`Remote`](extract::Remote) extractor; see the [`remote`] module. For async work outside of
-//! the router, a [`Task`](task::Task) polls a future from your own frames.
+//! async too, which a view can't `await`. With the `remote` feature (on by default), a
+//! [`Query`](remote::Query) is async data that fetches when read, can be refreshed and cached,
+//! and a [`Command`](remote::Command) an async mutation that refreshes the loads and queries
+//! that depend on what it changed. Both are plain values, kept in the app state or a
+//! [`PageState`](extract::PageState); see the [`remote`] module.
+//!
+//! ```
+//! # use egui_kit::remote::{self, Query};
+//! # async fn count_posts() -> Result<usize, String> { Ok(3) }
+//! #[derive(Clone)]
+//! struct AppState {
+//!     posts: Query<usize, String>,
+//! }
+//!
+//! let state = AppState {
+//!     posts: remote::query(count_posts).depends("posts"),
+//! };
+//! ```
 //!
 //! # Async runtimes
 //!
-//! Hooks, loads, queries and commands are polled by the router, on the UI thread, while it draws
-//! a frame; a future wakes it up with a repaint. That's all the browser's futures need on the
-//! web. Natively, futures that rely on Tokio (like `reqwest`'s) panic with "there is no reactor
-//! running" when polled outside of a Tokio runtime. Enter a multi-threaded runtime around
-//! [`RouterApp::ui`]: its threads drive timers and sockets, and wake the router up.
+//! Hooks and loads are polled by the router, on the UI thread, while it draws a frame; a future
+//! wakes it up with a repaint. That's all the browser's futures need on the web. Natively,
+//! futures that rely on Tokio (like `reqwest`'s) panic with "there is no reactor running" when
+//! polled outside of a Tokio runtime. With the `remote` feature, [`RouterApp::ui`] enters one:
+//! the app's if it entered one around it, else a multi-threaded runtime that egui-kit starts,
+//! which also runs the queries and commands.
+//!
+//! Without the feature, enter a multi-threaded runtime around [`RouterApp::ui`] yourself: its
+//! threads drive timers and sockets, and wake the router up.
 //!
 //! ```ignore
 //! struct App {
@@ -386,12 +401,12 @@ mod history;
 mod load;
 mod navigation;
 pub mod page;
+#[cfg(feature = "remote")]
 pub mod remote;
 mod render;
 mod request;
 mod router;
 mod session;
-pub mod task;
 mod transition;
 
 pub use app::RouterApp;
