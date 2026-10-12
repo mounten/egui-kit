@@ -95,7 +95,9 @@ impl Nav<'_> {
     ///
     /// The current page stays visible until all hooks and `load` handlers of the new route finished.
     /// Going to the current url does nothing (the page keeps its state), unless
-    /// [`GotoOptions::invalidate_all`] asks for a reload.
+    /// [`GotoOptions::invalidate_all`] asks for a reload. Going to the url that is already
+    /// loading, with the same options, keeps that navigation going, so a view may ask for it
+    /// every frame until it is done.
     pub fn goto(&self, url: impl Into<String>) {
         self.goto_with(url, GotoOptions::default());
     }

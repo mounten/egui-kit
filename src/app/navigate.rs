@@ -23,6 +23,8 @@ pub(super) enum NavKind {
 /// A navigation whose hooks and loads are running.
 pub(super) struct Pending<S> {
     pub(super) job: Job<S>,
+    /// The url that was asked for, before any redirects.
+    requested: String,
     kind: NavKind,
     options: GotoOptions,
     redirects: u8,
@@ -47,6 +49,13 @@ impl<S: Clone + 'static> RouterApp<S> {
     /// A navigation asked for by the app (links, `goto`), unless the page blocks it.
     pub(super) fn request_goto(&mut self, url: &str, options: GotoOptions) {
         let to = Request::new(url).untracked_url();
+        // Already on its way there: restarting would cancel the loads, which never finish if
+        // the view asks again every frame.
+        if self.pending.as_ref().is_some_and(|pending| {
+            pending.reload_of.is_none() && pending.requested == to && pending.options == options
+        }) {
+            return;
+        }
         let same_url = self
             .mounted
             .as_ref()
@@ -149,9 +158,10 @@ impl<S: Clone + 'static> RouterApp<S> {
             Job::start(entry, request, &self.state, &previous, &invalidation)
         });
 
-        self.nav.loading = Some(url);
+        self.nav.loading = Some(url.clone());
         self.pending = Some(Pending {
             job,
+            requested: url,
             kind,
             options,
             redirects,
@@ -165,6 +175,7 @@ impl<S: Clone + 'static> RouterApp<S> {
     pub(super) fn commit(&mut self, pending: Pending<S>, outcome: Outcome) {
         let Pending {
             job,
+            requested,
             kind,
             options,
             redirects,
@@ -179,7 +190,7 @@ impl<S: Clone + 'static> RouterApp<S> {
                 } else {
                     NavKind::Replace
                 };
-                return self.start(
+                self.start(
                     &redirect.to,
                     kind,
                     options,
@@ -187,6 +198,10 @@ impl<S: Clone + 'static> RouterApp<S> {
                     None,
                     Invalidation::None,
                 );
+                if let Some(pending) = &mut self.pending {
+                    pending.requested = requested;
+                }
+                return;
             }
             (Some((failed, Rejection::Redirect(_))), ..) => {
                 error_view(levels, failed, RouteError::internal("too many redirects"))
