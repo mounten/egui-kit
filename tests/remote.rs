@@ -128,6 +128,21 @@ fn new_queries_refetch_stale_cached_values() {
 }
 
 #[test]
+fn clones_share_whether_the_query_was_read() {
+    let fetches = Arc::default();
+    let query = counting(&fetches, false);
+    wait_until(|| data(&query.clone()).is_some());
+    for _ in 0..3 {
+        data(&query.clone());
+    }
+    assert_eq!(
+        fetches.load(Ordering::SeqCst),
+        1,
+        "reading a clone doesn't refetch"
+    );
+}
+
+#[test]
 fn queries_refetch_periodically() {
     let fetches = Arc::default();
     let query = counting(&fetches, false).refetch_every(Duration::from_millis(10));
