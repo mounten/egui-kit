@@ -13,7 +13,7 @@ use std::rc::Rc;
 
 use egui::{Id, Rect, Ui, UiBuilder, Vec2};
 
-use crate::navigation::Direction;
+use crate::navigation::{Direction, Navigation};
 use crate::page::Outlet;
 
 /// How one of the two pages is drawn in a frame of the transition
@@ -33,13 +33,16 @@ impl Layer {
 }
 
 /// The input of a transition effect for one frame.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct TransitionFrame {
     /// Linear progress, from `0.0` to `1.0`. Apply your own easing.
     pub t: f32,
     pub direction: Direction,
     /// The size of the outlet.
     pub size: Vec2,
+    /// The navigation being animated: where from and to, e.g. to slide by the pages' order in a
+    /// sidebar rather than by the history's direction.
+    pub navigation: Navigation,
 }
 
 type Effect = Rc<dyn Fn(&TransitionFrame) -> (Layer, Layer)>;
@@ -179,6 +182,7 @@ impl ViewTransition {
                 t,
                 direction: transition.direction(),
                 size: rect.size(),
+                navigation: transition.navigation().clone(),
             })
         });
 
@@ -267,6 +271,7 @@ pub(crate) struct OutletTransition<'a> {
     pub(crate) previous: &'a mut dyn FnMut(&mut Ui),
     pub(crate) state: &'a TransitionState,
     pub(crate) direction: Direction,
+    pub(crate) navigation: &'a Navigation,
 }
 
 /// [`OutletTransition`] behind a trait object, so an [`Outlet`]'s lifetime doesn't have to match it.
@@ -274,6 +279,7 @@ pub(crate) trait TransitionHandle {
     fn render_previous(&mut self, ui: &mut Ui);
     fn state(&self) -> &TransitionState;
     fn direction(&self) -> Direction;
+    fn navigation(&self) -> &Navigation;
 }
 
 impl TransitionHandle for OutletTransition<'_> {
@@ -287,5 +293,9 @@ impl TransitionHandle for OutletTransition<'_> {
 
     fn direction(&self) -> Direction {
         self.direction
+    }
+
+    fn navigation(&self) -> &Navigation {
+        self.navigation
     }
 }

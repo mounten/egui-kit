@@ -6,7 +6,7 @@ use std::rc::Rc;
 use egui::Ui;
 use egui_kit::extract::{Nav, State};
 use egui_kit::page::{Layout, Outlet, Page};
-use egui_kit::{MemoryHistory, Navigation, Router, RouterApp, ViewTransition};
+use egui_kit::{Layer, MemoryHistory, Navigation, Router, RouterApp, ViewTransition};
 
 #[derive(Clone, Default)]
 struct AppState {
@@ -243,4 +243,30 @@ fn the_outgoing_page_keeps_its_opacity() {
         [1.0, 1.0],
         "the fade starts at full opacity"
     );
+}
+
+#[test]
+fn effects_know_the_navigation() {
+    let ctx = egui::Context::default();
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    let log = Rc::clone(&seen);
+    let mut app = Router::new()
+        .layout(Layout::new(move |ui: &mut Ui, outlet: Outlet<'_>| {
+            let log = Rc::clone(&log);
+            ViewTransition::custom(move |frame| {
+                let navigation = &frame.navigation;
+                log.borrow_mut()
+                    .push(format!("{:?} -> {}", navigation.from, navigation.to));
+                (Layer::VISIBLE, Layer::VISIBLE)
+            })
+            .duration(1.0)
+            .show(ui, outlet);
+        }))
+        .page("/", Page::new(|_: &mut Ui| {}))
+        .page("/about", Page::new(|_: &mut Ui| {}))
+        .with_state_and_history(AppState::default(), MemoryHistory::new("/"));
+    frame(&ctx, &mut app, 0.0);
+    app.goto("/about?tab=1");
+    frame(&ctx, &mut app, 1.0);
+    assert_eq!(*seen.borrow(), [r#"Some("/") -> /about?tab=1"#]);
 }
