@@ -144,6 +144,9 @@ impl<T: MaybeSend + 'static, E: MaybeSend + 'static> Query<T, E> {
     /// Shares the state of the queries with the same key (and value and error types): they
     /// fetch once for all of them, and the value is [cached](Self::cache_for). The first
     /// query with a key fetches with its function, the others use its value.
+    ///
+    /// The key identifies the data, so it must contain everything the fetch uses, like
+    /// `("user", id)`. See [Keys, dependencies and refreshes](crate::remote#keys-dependencies-and-refreshes).
     #[must_use]
     pub fn key(mut self, key: impl AsId) -> Self {
         let id = (TypeId::of::<(T, E)>(), Id::new(key));
@@ -167,8 +170,13 @@ impl<T: MaybeSend + 'static, E: MaybeSend + 'static> Query<T, E> {
         self
     }
 
-    /// Refetches when `key` is invalidated: with [`Nav::invalidate`](crate::extract::Nav::invalidate),
-    /// [`invalidate`](super::invalidate), or by a command that [refreshes](super::Command::refreshes) it.
+    /// Refetches when the dependency `key` is invalidated: with
+    /// [`Nav::invalidate`](crate::extract::Nav::invalidate), [`invalidate`](super::invalidate), or
+    /// by a command that [refreshes](super::Command::refreshes) it. Loads with the same
+    /// [dependency](crate::page::Page::depends) rerun along. Call it once per dependency.
+    ///
+    /// A dependency names data on the backend (`"users"`), unlike the [key](Self::key) that
+    /// names one value (`("user", 1)`). See [Keys, dependencies and refreshes](crate::remote#keys-dependencies-and-refreshes).
     #[must_use]
     pub fn depends(self, key: impl Into<String>) -> Self {
         let key = key.into();

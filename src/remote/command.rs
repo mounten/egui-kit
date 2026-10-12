@@ -56,8 +56,11 @@ pub fn command<T: MaybeSend + 'static, E: MaybeSend + 'static>() -> Command<T, E
 }
 
 impl<T: MaybeSend + 'static, E: MaybeSend + 'static> Command<T, E> {
-    /// Once a run succeeded, reruns the loads and queries that depend on `key`, like
-    /// [`Nav::invalidate`](crate::extract::Nav::invalidate).
+    /// Once a run succeeded, invalidates the dependency `key`, like
+    /// [`Nav::invalidate`](crate::extract::Nav::invalidate): the queries that
+    /// [depend](super::Query::depends) on it refetch, and the loads that
+    /// [depend](crate::page::Page::depends) on it rerun. Call it once per dependency; a failed
+    /// run invalidates nothing. See [Keys, dependencies and refreshes](crate::remote#keys-dependencies-and-refreshes).
     #[must_use]
     pub fn refreshes(mut self, key: impl Into<String>) -> Self {
         self.refreshes.push(key.into());

@@ -16,27 +16,73 @@
 //! Both are plain values: keep them in the app state, a [`PageState`](crate::extract::PageState)
 //! or any struct of yours. Clones share their state.
 //!
+//! # Example
+//!
+//! A todo list that fetches the todos from a backend, and adds one with a `POST`:
+//!
 //! ```
+//! use std::sync::{Arc, Mutex};
+//!
 //! use egui::Ui;
 //! use egui_kit::remote::{self, Command, Query, QueryState};
 //!
-//! # async fn fetch_todos() -> Result<Vec<String>, String> { Ok(vec![]) }
-//! # async fn post_todo(_title: String) -> Result<(), String> { Ok(()) }
-//! struct Todos {
-//!     list: Query<Vec<String>, String>,
-//!     add: Command<(), String>,
+//! /// The backend. A stand-in for an HTTP client like `reqwest::Client`: cheap to clone, and
+//! /// `Send`, as queries and commands run on other threads.
+//! #[derive(Clone, Default)]
+//! struct Api {
+//!     todos: Arc<Mutex<Vec<String>>>,
 //! }
 //!
-//! impl Todos {
-//!     fn new() -> Self {
+//! impl Api {
+//!     /// `GET /todos`
+//!     async fn todos(&self) -> Result<Vec<String>, String> {
+//!         Ok(self.todos.lock().unwrap().clone())
+//!     }
+//!
+//!     /// `POST /todos`
+//!     async fn add_todo(&self, title: String) -> Result<(), String> {
+//!         if title.is_empty() {
+//!             return Err("a todo needs a title".into());
+//!         }
+//!         self.todos.lock().unwrap().push(title);
+//!         Ok(())
+//!     }
+//! }
+//!
+//! struct TodoList {
+//!     api: Api,
+//!     todos: Query<Vec<String>, String>,
+//!     add: Command<(), String>,
+//!     title: String,
+//! }
+//!
+//! impl TodoList {
+//!     fn new(api: Api) -> Self {
+//!         // The closure is called for every fetch (the first one, refreshes, refetches), and
+//!         // returns a new future each time, with its own clone of the client.
+//!         let todos = remote::query({
+//!             let api = api.clone();
+//!             move || {
+//!                 let api = api.clone();
+//!                 async move { api.todos().await }
+//!             }
+//!         })
+//!         // Every query with this key, anywhere in the app, shares this one's value.
+//!         .key("todos")
+//!         // Refetch when "todos" is invalidated, e.g. by the command below.
+//!         .depends("todos");
+//!
 //!         Self {
-//!             list: remote::query(fetch_todos).key("todos").depends("todos"),
+//!             api,
+//!             todos,
+//!             // Invalidates "todos" once a todo was added.
 //!             add: remote::command().refreshes("todos"),
+//!             title: String::new(),
 //!         }
 //!     }
 //!
-//!     fn ui(&self, ui: &mut Ui) {
-//!         match self.list.state() {
+//!     fn ui(&mut self, ui: &mut Ui) {
+//!         match self.todos.state() {
 //!             QueryState::Loading => {
 //!                 ui.spinner();
 //!             }
@@ -46,19 +92,83 @@
 //!                 }
 //!             }
 //!             QueryState::Failed(error) => {
-//!                 ui.label(format!("Failed: {error}"));
+//!                 ui.label(format!("Couldn't load the todos: {error}"));
 //!             }
 //!         }
 //!
-//!         if ui.add_enabled(!self.add.is_pending(), egui::Button::new("Add")).clicked() {
-//!             self.add.run(post_todo("Buy milk".into()));
-//!         }
+//!         ui.horizontal(|ui| {
+//!             ui.text_edit_singleline(&mut self.title);
+//!             if ui.add_enabled(!self.add.is_pending(), egui::Button::new("Add")).clicked() {
+//!                 let api = self.api.clone();
+//!                 let title = core::mem::take(&mut self.title);
+//!                 self.add.run(async move { api.add_todo(title).await });
+//!             }
+//!         });
 //!         if let Some(error) = self.add.error() {
 //!             ui.label(&*error);
 //!         }
 //!     }
 //! }
 //! ```
+//!
+//! When the `POST` succeeds, the command invalidates `"todos"`, the query refetches, and the
+//! list shows the new todo. Nothing else has to tell the list that it changed.
+//!
+//! # Keys, dependencies and refreshes
+//!
+//! They answer different questions:
+//!
+//! | | Answers | Set with |
+//! |---|---|---|
+//! | key | *Which* data is this? Queries with the same key are the same data. | [`Query::key`] |
+//! | dependency | *When* is it outdated? It refetches when one of its dependencies is invalidated. | [`Query::depends`], [`Page::depends`] |
+//! | refresh | *What* did a mutation change? The dependencies it invalidates when it succeeds. | [`Command::refreshes`] |
+//!
+//! A **key** identifies a query's value in the cache. Queries with the same key (and value and
+//! error types) share one state: they fetch once for all of them, and a query created later
+//! finds the value right away, e.g. when a page is opened again. So the key must contain
+//! everything the fetch depends on: `("user", id)`, not `"user"`. A query without a key has a
+//! value of its own, which is dropped with it.
+//!
+//! A **dependency** is a name for some data on the backend, like `"todos"` or `"users"`. It is
+//! the same kind of name as a load's [`Page::depends`]: a single invalidation reruns the loads
+//! and refetches the queries that depend on it, so many queries can depend on one name, and a
+//! query can depend on several. Dependencies are coarser than keys: `("user", 1)` and
+//! `("user", 2)` are two keys that both depend on `"users"`.
+//!
+//! A **refresh** invalidates a dependency once a command succeeded: the command says what it
+//! changed, and doesn't need to know who shows it. Invalidating a dependency directly does the
+//! same, with [`Nav::invalidate`] in a view, or with [`invalidate`] from anywhere on the UI
+//! thread.
+//!
+//! ```
+//! # use egui_kit::remote::{self, Command, Query};
+//! # #[derive(Clone)]
+//! # struct Api;
+//! # impl Api {
+//! #     async fn user(&self, _id: u32) -> Result<String, String> { Ok("Ferris".into()) }
+//! #     async fn rename(&self, _id: u32, _name: String) -> Result<(), String> { Ok(()) }
+//! # }
+//! fn user(api: &Api, id: u32) -> Query<String, String> {
+//!     let api = api.clone();
+//!     remote::query(move || {
+//!         let api = api.clone();
+//!         async move { api.user(id).await }
+//!     })
+//!     .key(("user", id)) // one cache entry per user
+//!     .depends("users") // refetched when any user changes
+//! }
+//!
+//! fn rename(api: &Api, rename: &Command<(), String>, id: u32, name: String) {
+//!     let api = api.clone();
+//!     // `rename` was created with `remote::command().refreshes("users")`: once it succeeded,
+//!     // every user query refetches, and so do the loads with `.depends("users")`.
+//!     rename.run(async move { api.rename(id, name).await });
+//! }
+//! ```
+//!
+//! The [`RouterApp`] applies invalidations at its next frame. A query that is invalidated keeps
+//! its value, and refetches the next time it is read.
 //!
 //! # Runtimes
 //!
@@ -73,17 +183,18 @@
 //!
 //! # Caching
 //!
-//! A query fetches on its first read, and keeps its value while it refetches. With a
-//! [key](Query::key), queries share their state: one fetch for all of them, and a value that
-//! outlives them for [a while](Query::cache_for), so that a page opened again shows it right
-//! away. A query reading a cached value for the first time refetches it if it is [older than
-//! `stale_after`](Query::stale_after).
+//! A query fetches on its first read, and keeps its value while it refetches. A keyed value
+//! outlives its queries for [a while](Query::cache_for), so that a page opened again shows it
+//! right away. A query reading a cached value for the first time refetches it if it is [older
+//! than `stale_after`](Query::stale_after), showing the cached value meanwhile.
 //!
 //! Dropping a query's state (its last clone, and its cache entry if keyed) aborts its fetch,
 //! like refreshing it aborts the one in progress. Commands always run to completion.
 //!
 //! [`RouterApp`]: crate::RouterApp
 //! [`RouterApp::ui`]: crate::RouterApp::ui
+//! [`Page::depends`]: crate::page::Page::depends
+//! [`Nav::invalidate`]: crate::extract::Nav::invalidate
 
 mod command;
 mod query;
