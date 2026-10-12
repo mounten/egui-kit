@@ -81,6 +81,11 @@
 //! [invalidation](crate::extract::Nav::invalidate) or a [refresh](Remote::refresh)),
 //! [`QueryState::current`] still has the previous value. A query that [refetches
 //! periodically](Query::refetch_every) reruns the same way.
+//!
+//! A run belongs to its query's entry: when the entry is dropped, or the query reruns before
+//! the run finished, its future is dropped too. That cancels it like any dropped future, e.g. a
+//! request in flight is aborted if the HTTP client does so on drop (as `reqwest` does on the
+//! web). Commands, on the other hand, always run to completion.
 
 use core::any::{Any, TypeId};
 use core::cell::{Cell, RefCell};

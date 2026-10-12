@@ -153,7 +153,9 @@ impl<S: Clone + 'static> RouterApp<S> {
         self.pending.is_some()
     }
 
-    /// Navigates to `url`, adding a history entry. See [`Nav::goto`](crate::extract::Nav::goto).
+    /// Navigates to `url`, adding a history entry. Going to the current url does nothing, unless
+    /// [`GotoOptions::invalidate_all`] asks for a reload. See
+    /// [`Nav::goto`](crate::extract::Nav::goto).
     pub fn goto(&mut self, url: &str) {
         self.goto_with(url, GotoOptions::default());
     }
