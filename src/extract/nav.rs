@@ -111,7 +111,8 @@ impl Nav<'_> {
         self.push(NavAction::Goto(url.into(), options));
     }
 
-    /// Navigates to `url`, replacing the current history entry.
+    /// Navigates to `url`, replacing the current history entry. Like [`Nav::goto`], going to the
+    /// current url does nothing, unless [`GotoOptions::invalidate_all`] asks for a reload.
     pub fn replace(&self, url: impl Into<String>) {
         self.goto_with(url, GotoOptions::default().replace_state());
     }
