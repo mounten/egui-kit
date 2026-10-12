@@ -207,12 +207,14 @@ pub(crate) fn render<S>(
             None,
         );
     };
+    let navigation = mounted.navigation.clone();
     let handoff = Handoff {
         depth,
         transition: OutletTransition {
             previous: &mut render_previous,
             state: transition_state,
             direction: *direction,
+            navigation: &navigation,
         },
     };
     mounted.render(ui, state, nav, remote, 0, Some(handoff));
