@@ -96,8 +96,9 @@ pub struct Query<T, E> {
     refetch_every: Option<Duration>,
     stale_after: Duration,
     cache_for: Option<Duration>,
-    /// Whether it was read: until then, it refetches a value older than `stale_after`.
-    read: Cell<bool>,
+    /// Whether it (or a clone) was read: until then, it refetches a value older than
+    /// `stale_after`.
+    read: Rc<Cell<bool>>,
 }
 
 /// A [`Query`] that fetches with `fetch`.
@@ -137,7 +138,7 @@ impl<T: MaybeSend + 'static, E: MaybeSend + 'static> Query<T, E> {
             refetch_every: None,
             stale_after: Duration::ZERO,
             cache_for: None,
-            read: Cell::new(false),
+            read: Rc::default(),
         }
     }
 
@@ -350,7 +351,7 @@ impl<T, E> Clone for Query<T, E> {
             refetch_every: self.refetch_every,
             stale_after: self.stale_after,
             cache_for: self.cache_for,
-            read: self.read.clone(),
+            read: Rc::clone(&self.read),
         }
     }
 }
