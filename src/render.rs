@@ -194,6 +194,10 @@ pub(crate) fn render<S>(
         state: transition_state,
     } = transition;
     let mut render_previous = |ui: &mut Ui| {
+        // Still drawn, but no longer the page: it looks the same, but doesn't respond.
+        let opacity = ui.opacity();
+        ui.disable();
+        ui.set_opacity(opacity);
         previous.render(
             ui,
             state,
