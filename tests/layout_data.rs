@@ -5,7 +5,7 @@ use std::rc::Rc;
 
 use egui::Ui;
 use egui_kit::extract::{LayoutData, State};
-use egui_kit::page::{Layout, Outlet, Page};
+use egui_kit::page::{Children, Layout, Page};
 use egui_kit::{MemoryHistory, Rejection, Router, RouterApp};
 
 type Log = Rc<RefCell<Vec<String>>>;
@@ -26,7 +26,7 @@ async fn count() -> Result<u32, Rejection> {
 }
 
 fn app(url: &str) -> RouterApp<Log> {
-    let shared = |ui: &mut Ui, mut outlet: Outlet<'_>, _: &Workspace| outlet.show(ui);
+    let shared = |ui: &mut Ui, mut children: Children<'_>, _: &Workspace| children.show(ui);
     let page = Page::new(
         |_: &mut Ui, State(log): State<&Log>, workspace: LayoutData<'_, Workspace>| {
             log.borrow_mut().push(workspace.0.clone());
@@ -37,22 +37,22 @@ fn app(url: &str) -> RouterApp<Log> {
             inner_workspace,
             // Reads the layout above, and shares its own data with the page below.
             |ui: &mut Ui,
-             mut outlet: Outlet<'_>,
+             mut children: Children<'_>,
              State(log): State<&Log>,
              _: &Workspace,
              outer: LayoutData<'_, Workspace>| {
                 log.borrow_mut()
                     .push(format!("inner layout in {}", outer.0));
-                outlet.show(ui);
+                children.show(ui);
             },
         ))
         .page("/", page);
     let exclusive = Router::new()
         .layout(Layout::with_load(
             count,
-            |ui: &mut Ui, mut outlet: Outlet<'_>, count: &mut u32| {
+            |ui: &mut Ui, mut children: Children<'_>, count: &mut u32| {
                 *count += 1;
-                outlet.show(ui);
+                children.show(ui);
             },
         ))
         .page("/", Page::new(|_: &mut Ui, _: LayoutData<'_, u32>| {}));

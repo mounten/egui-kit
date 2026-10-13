@@ -15,7 +15,7 @@ use crate::page::ViewContext;
 /// use egui::Ui;
 /// use egui_kit::Rejection;
 /// use egui_kit::extract::LayoutData;
-/// use egui_kit::page::{Layout, Outlet, Page};
+/// use egui_kit::page::{Layout, Children, Page};
 ///
 /// struct Workspace {
 ///     name: String,
@@ -26,9 +26,9 @@ use crate::page::ViewContext;
 /// }
 ///
 /// // Takes its data as `&Workspace`, so the views below can read it too.
-/// fn workspace_layout(ui: &mut Ui, mut outlet: Outlet, workspace: &Workspace) {
+/// fn workspace_layout(ui: &mut Ui, mut children: Children, workspace: &Workspace) {
 ///     ui.heading(&workspace.name);
-///     outlet.show(ui);
+///     children.show(ui);
 /// }
 ///
 /// fn settings(ui: &mut Ui, workspace: LayoutData<Workspace>) {

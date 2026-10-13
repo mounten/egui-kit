@@ -7,7 +7,7 @@ use egui::Ui;
 use egui_kit::extract::{
     Nav, PageState, PageStateFrom, PersistentState, Snapshot, SnapshotFrom, State,
 };
-use egui_kit::page::{Layout, Outlet, Page};
+use egui_kit::page::{Children, Layout, Page};
 use egui_kit::{GotoOptions, MemoryHistory, Rejection, Router, RouterApp};
 use serde::{Deserialize, Serialize};
 
@@ -62,7 +62,7 @@ fn form(
 
 fn blog_layout(
     ui: &mut Ui,
-    mut outlet: Outlet<'_>,
+    mut children: Children<'_>,
     mut draft: PageState<'_, Draft>,
     mut search: Snapshot<'_, Search>,
     State(state): State<&AppState>,
@@ -72,7 +72,7 @@ fn blog_layout(
         search.0 = text;
     }
     state.push(format!("layout:page={}:snapshot={}", draft.0, search.0));
-    outlet.show(ui);
+    children.show(ui);
 }
 
 /// The load it was made from.
@@ -109,12 +109,15 @@ fn page(name: &'static str) -> Page<AppState> {
 fn app(ctx_url: &str) -> RouterApp<AppState> {
     Router::new()
         .layout(Layout::new(
-            |ui: &mut Ui, mut outlet: Outlet<'_>, State(state): State<&AppState>, nav: Nav<'_>| {
+            |ui: &mut Ui,
+             mut children: Children<'_>,
+             State(state): State<&AppState>,
+             nav: Nav<'_>| {
                 let commands = core::mem::take(&mut *state.commands.borrow_mut());
                 for command in commands {
                     command(nav);
                 }
-                outlet.show(ui);
+                children.show(ui);
             },
         ))
         .page("/", page("home"))

@@ -6,11 +6,11 @@ use std::rc::Rc;
 use egui::Ui;
 
 use super::handler::ErasedHandler;
-use super::view::{Outlet, ViewContext};
+use super::view::{Children, ViewContext};
 
 /// A page or error view; its data is in the [`ViewContext`].
 pub(crate) type ErasedView<S> = Rc<dyn Fn(&mut Ui, &ViewContext<'_, S>)>;
-pub(crate) type ErasedLayoutView<S> = Rc<dyn Fn(&mut Ui, Outlet<'_>, &ViewContext<'_, S>)>;
+pub(crate) type ErasedLayoutView<S> = Rc<dyn Fn(&mut Ui, Children<'_>, &ViewContext<'_, S>)>;
 
 /// Identifies a page or layout, to recognise it across navigations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

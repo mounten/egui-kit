@@ -5,13 +5,13 @@
 
 use egui::{Align, Button, Panel, RichText};
 use egui_kit::extract::{Nav, PersistentState, State};
-use egui_kit::page::Outlet;
+use egui_kit::page::Children;
 
 use crate::state::{AppState, TransitionStyle};
 
 pub fn view(
     ui: &mut egui::Ui,
-    outlet: Outlet<'_>,
+    children: Children<'_>,
     State(state): State<&AppState>,
     mut style: PersistentState<'_, TransitionStyle>,
     nav: Nav<'_>,
@@ -76,5 +76,5 @@ pub fn view(
     let transition = style.view_transition();
     // Written back now, so the blog layout below sees a new choice in the same frame.
     drop(style);
-    egui::CentralPanel::default().show(ui, |ui| transition.show(ui, outlet));
+    egui::CentralPanel::default().show(ui, |ui| transition.show(ui, children));
 }

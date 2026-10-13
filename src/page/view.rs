@@ -147,16 +147,16 @@ pub trait View<T, S, D>: 'static {
     fn call(&self, ui: &mut Ui, cx: &ViewContext<'_, S>);
 }
 
-/// A layout view: `Fn(&mut Ui, Outlet, T1, …, T16)` where every `T` is a [`FromView`] extractor.
+/// A layout view: `Fn(&mut Ui, Children, T1, …, T16)` where every `T` is a [`FromView`] extractor.
 #[diagnostic::on_unimplemented(
-    message = "`{Self}` is not a layout view: `fn(&mut Ui, Outlet, extractors...)` with up to 16 view extractors",
+    message = "`{Self}` is not a layout view: `fn(&mut Ui, Children, extractors...)` with up to 16 view extractors",
     note = "views borrow the app state: `State<&T>` rather than `State<T>`, and `HistoryState<&T>`",
     note = "the data must be what the `load` returned: `&mut {D}` or `&{D}`",
     note = "closures need annotated arguments, e.g. `|ui: &mut Ui, nav: Nav| ...`",
     note = "see the `egui_kit::extract` module for the available extractors"
 )]
 pub trait LayoutView<T, S, D>: 'static {
-    fn call(&self, ui: &mut Ui, outlet: Outlet<'_>, cx: &ViewContext<'_, S>);
+    fn call(&self, ui: &mut Ui, children: Children<'_>, cx: &ViewContext<'_, S>);
 
     /// Whether the view takes its data as `&mut D`. If not, the views below can read it with
     /// [`LayoutData`](crate::extract::LayoutData).
@@ -198,24 +198,24 @@ macro_rules! impl_views {
         )]
         impl<F, S: 'static, D, $($ty,)*> LayoutView<($($ty,)*), S, D> for F
         where
-            F: Fn(&mut Ui, Outlet<'_>, $($ty),*) + 'static,
-            F: for<'f> Fn(&mut Ui, Outlet<'_>, $(<$ty as FromView<S, D>>::Item<'f>),*),
+            F: Fn(&mut Ui, Children<'_>, $($ty),*) + 'static,
+            F: for<'f> Fn(&mut Ui, Children<'_>, $(<$ty as FromView<S, D>>::Item<'f>),*),
             $($ty: FromView<S, D>,)*
         {
             #[allow(non_snake_case, unused_variables)]
-            fn call(&self, ui: &mut Ui, outlet: Outlet<'_>, cx: &ViewContext<'_, S>) {
+            fn call(&self, ui: &mut Ui, children: Children<'_>, cx: &ViewContext<'_, S>) {
                 #[allow(clippy::too_many_arguments)]
                 fn call_inner<$($ty),*>(
-                    f: impl Fn(&mut Ui, Outlet<'_>, $($ty),*),
+                    f: impl Fn(&mut Ui, Children<'_>, $($ty),*),
                     ui: &mut Ui,
-                    outlet: Outlet<'_>,
+                    children: Children<'_>,
                     $($ty: $ty),*
                 ) {
-                    f(ui, outlet, $($ty),*)
+                    f(ui, children, $($ty),*)
                 }
                 $($ty::prepare(cx);)*
                 $(let $ty = $ty::from_view(cx);)*
-                call_inner(self, ui, outlet, $($ty),*)
+                call_inner(self, ui, children, $($ty),*)
             }
 
             fn borrows_data_mut(&self) -> bool {
@@ -230,15 +230,15 @@ crate::all_tuples!(impl_views);
 /// The slot a [`Layout`](crate::page::Layout) renders its child (a nested layout, a page or an error
 /// page) into. Layout views get it as their second argument.
 ///
-/// Show it with [`Outlet::show`], or animated with a [`ViewTransition`](crate::ViewTransition).
-pub struct Outlet<'o> {
+/// Show it with [`Children::show`], or animated with a [`ViewTransition`](crate::ViewTransition).
+pub struct Children<'o> {
     pub(crate) inner: &'o mut dyn FnMut(&mut Ui),
     /// Remembers that this layout animates page changes.
     pub(crate) uses_transitions: &'o Cell<bool>,
     pub(crate) transition: Option<&'o mut dyn TransitionHandle>,
 }
 
-impl Outlet<'_> {
+impl Children<'_> {
     pub fn show(&mut self, ui: &mut Ui) {
         (self.inner)(ui);
     }
