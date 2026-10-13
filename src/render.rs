@@ -10,10 +10,10 @@ use crate::error::RouteError;
 use crate::extract::{Nav, NavState, PageScroll, ViewStore};
 use crate::load::Loaded;
 use crate::navigation::{Direction, Navigation};
-use crate::page::{ErasedView, Frame, NodeId, Outlet, Page, ViewContext, ViewData};
+use crate::page::{Children, ErasedView, Frame, NodeId, Page, ViewContext, ViewData};
 use crate::request::Request;
 use crate::router::Level;
-use crate::transition::{OutletTransition, TransitionHandle, TransitionState};
+use crate::transition::{ChildrenTransition, TransitionHandle, TransitionState};
 
 /// What is drawn inside the layouts.
 pub(crate) enum Content<S> {
@@ -205,7 +205,7 @@ pub(crate) fn render<S>(
     let navigation = mounted.navigation.clone();
     let handoff = Handoff {
         depth,
-        transition: OutletTransition {
+        transition: ChildrenTransition {
             previous: &mut render_previous,
             state: transition_state,
             direction: *direction,
@@ -235,11 +235,11 @@ fn transition_owner<S>(new: &Mounted<S>, old: &Mounted<S>) -> Option<usize> {
     })
 }
 
-/// Passed down the layouts to the outlet that runs the transition.
+/// Passed down the layouts to the children that runs the transition.
 struct Handoff<'a> {
     /// Remaining levels until the transitioning layout.
     depth: usize,
-    transition: OutletTransition<'a>,
+    transition: ChildrenTransition<'a>,
 }
 
 /// The levels around a view, with their layouts' data and stores.
@@ -317,7 +317,7 @@ fn render_levels<S>(
         (Some(layout), Some(loaded), Some(store)) => {
             let mut child =
                 |ui: &mut Ui| render_levels(ui, state, frame, below_chain, leaf, below.take());
-            let outlet = Outlet {
+            let children = Children {
                 inner: &mut child,
                 uses_transitions: &layout.transitions,
                 transition: here.as_mut().map(|t| t as &mut dyn TransitionHandle),
@@ -328,7 +328,7 @@ fn render_levels<S>(
                 let data = ViewData::Mut(&mut **data);
                 (layout.view)(
                     ui,
-                    outlet,
+                    children,
                     &ViewContext::new(state, frame, data, store, above),
                 );
             } else {
@@ -336,7 +336,7 @@ fn render_levels<S>(
                 let data = ViewData::Shared(&**data);
                 (layout.view)(
                     ui,
-                    outlet,
+                    children,
                     &ViewContext::new(state, frame, data, store, above),
                 );
             }

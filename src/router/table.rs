@@ -180,7 +180,7 @@ mod tests {
     #[test]
     fn layout_resets() {
         use crate::page::Layout;
-        let layout = || Layout::new(|_: &mut egui::Ui, _: crate::page::Outlet<'_>| {});
+        let layout = || Layout::new(|_: &mut egui::Ui, _: crate::page::Children<'_>| {});
         let router = || {
             Router::new().layout(layout()).nest(
                 "/a",

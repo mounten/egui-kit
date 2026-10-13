@@ -35,7 +35,7 @@
 //! | [`Navigation`] | how the page was reached: from where, how, in which history direction |
 //! | [`Request`] | the url the page was loaded with, and its route's parameters |
 //!
-//! Layout views also get the [`Outlet`](crate::page::Outlet) as their second argument; it is not an
+//! Layout views also get the [`Children`](crate::page::Children) as their second argument; it is not an
 //! extractor, every layout has exactly one.
 //!
 //! # Borrowing and mutating

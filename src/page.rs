@@ -32,7 +32,7 @@
 //! ```
 //!
 //! A [`Layout`] wraps all pages of a router. Its view
-//! ([`LayoutView`]) gets the [`Outlet`] to draw the page in as its second argument.
+//! ([`LayoutView`]) gets the [`Children`] to draw the page in as its second argument.
 //!
 //! Views can be closures too, with annotated arguments: `|ui: &mut Ui, nav: Nav| …`.
 
@@ -48,8 +48,8 @@ pub use handler::Handler;
 pub(crate) use handler::{ErasedHandler, LocalBoxFuture, erase, unit};
 pub use layout::Layout;
 pub(crate) use loader::{ErasedView, LayoutReset, Loader, NodeId};
+pub use view::{Children, LayoutView, View, ViewContext};
 pub(crate) use view::{Frame, ViewData};
-pub use view::{LayoutView, Outlet, View, ViewContext};
 
 /// A page: an optional `load` handler and a [view](View).
 ///

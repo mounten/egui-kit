@@ -7,7 +7,7 @@ use std::rc::Rc;
 
 use egui::Ui;
 use egui_kit::extract::{HistoryState, Nav, Path, Query, State};
-use egui_kit::page::{Layout, Outlet, Page};
+use egui_kit::page::{Children, Layout, Page};
 use egui_kit::{MemoryHistory, Rejection, Request, RouteError, Router, RouterApp, error, redirect};
 use serde::Deserialize;
 
@@ -79,11 +79,11 @@ fn app(state: AppState, url: &str) -> RouterApp<AppState> {
         .layout(Layout::with_load(
             |Path(id): Path<u32>| async move { Ok::<_, Rejection>(format!("user {id}")) },
             |ui: &mut Ui,
-             mut outlet: Outlet<'_>,
+             mut children: Children<'_>,
              State(state): State<&AppState>,
              title: &String| {
                 state.push(format!("users-layout:{title}"));
-                outlet.show(ui);
+                children.show(ui);
             },
         ))
         .error(
@@ -103,13 +103,16 @@ fn app(state: AppState, url: &str) -> RouterApp<AppState> {
 
     Router::new()
         .layout(Layout::new(
-            |ui: &mut Ui, mut outlet: Outlet<'_>, State(state): State<&AppState>, nav: Nav<'_>| {
+            |ui: &mut Ui,
+             mut children: Children<'_>,
+             State(state): State<&AppState>,
+             nav: Nav<'_>| {
                 state.push("root-layout");
                 let commands = core::mem::take(&mut *state.commands.borrow_mut());
                 for command in commands {
                     command(nav);
                 }
-                outlet.show(ui);
+                children.show(ui);
             },
         ))
         .page(
@@ -385,7 +388,7 @@ fn sixteen_extractors() {
     #[expect(clippy::too_many_arguments)]
     fn layout(
         ui: &mut Ui,
-        mut outlet: Outlet<'_>,
+        mut children: Children<'_>,
         _: &(),
         _: V<'_>,
         _: V<'_>,
@@ -404,7 +407,7 @@ fn sixteen_extractors() {
         State(state): V<'_>,
     ) {
         state.push("layout");
-        outlet.show(ui);
+        children.show(ui);
     }
 
     let state = AppState::default();

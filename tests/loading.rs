@@ -7,7 +7,7 @@ use std::rc::Rc;
 
 use egui::Ui;
 use egui_kit::extract::{Nav, Parent, Path, Query, State};
-use egui_kit::page::{Layout, Outlet, Page};
+use egui_kit::page::{Children, Layout, Page};
 use egui_kit::{MemoryHistory, Rejection, Router, RouterApp};
 use serde::Deserialize;
 
@@ -106,17 +106,17 @@ fn render(name: &'static str) -> Page<AppState> {
     })
 }
 
-fn outlet(ui: &mut Ui, mut outlet: Outlet<'_>) {
-    outlet.show(ui);
+fn children(ui: &mut Ui, mut children: Children<'_>) {
+    children.show(ui);
 }
 
 fn app(url: &str) -> RouterApp<AppState> {
     let users = Router::new()
-        .layout(Layout::with_load(users_layout, outlet))
+        .layout(Layout::with_load(users_layout, children))
         .page("/", render("user"))
         .page("/posts/{post}", Page::with_load(user_post, |_: &mut Ui| {}));
     let counted = Router::new()
-        .layout(Layout::with_load(counter_layout, outlet).depends("counter"))
+        .layout(Layout::with_load(counter_layout, children).depends("counter"))
         .page(
             "/",
             Page::with_load(
@@ -134,18 +134,21 @@ fn app(url: &str) -> RouterApp<AppState> {
             Page::with_load(independent, |_: &mut Ui| {}),
         );
     let slow = Router::new()
-        .layout(Layout::with_load(slow_layout, outlet))
+        .layout(Layout::with_load(slow_layout, children))
         .page("/", Page::with_load(independent, |_: &mut Ui| {}));
 
     Router::new()
         .layout(Layout::with_load(
             root,
-            |ui: &mut Ui, mut outlet: Outlet<'_>, State(state): State<&AppState>, nav: Nav<'_>| {
+            |ui: &mut Ui,
+             mut children: Children<'_>,
+             State(state): State<&AppState>,
+             nav: Nav<'_>| {
                 let commands = core::mem::take(&mut *state.commands.borrow_mut());
                 for command in commands {
                     command(nav);
                 }
-                outlet.show(ui);
+                children.show(ui);
             },
         ))
         .page("/", render("home"))

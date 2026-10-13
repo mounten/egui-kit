@@ -5,7 +5,7 @@ use std::rc::Rc;
 
 use egui::Ui;
 use egui_kit::extract::{Nav, State};
-use egui_kit::page::{Layout, Outlet, Page};
+use egui_kit::page::{Children, Layout, Page};
 use egui_kit::{Layer, MemoryHistory, Navigation, Router, RouterApp, ViewTransition};
 
 #[derive(Clone, Default)]
@@ -42,30 +42,30 @@ fn page(name: &'static str) -> Page<AppState> {
 fn app() -> RouterApp<AppState> {
     let users = Router::new()
         .layout(Layout::new(
-            |ui: &mut Ui, outlet: Outlet<'_>, State(state): State<&AppState>| {
+            |ui: &mut Ui, children: Children<'_>, State(state): State<&AppState>| {
                 state.push("users-layout");
-                ViewTransition::fade().duration(1.0).show(ui, outlet);
+                ViewTransition::fade().duration(1.0).show(ui, children);
             },
         ))
         .page("/{id}", page("user"));
     let plain = Router::new()
         .layout(Layout::new(
-            |ui: &mut Ui, mut outlet: Outlet<'_>, State(state): State<&AppState>| {
+            |ui: &mut Ui, mut children: Children<'_>, State(state): State<&AppState>| {
                 state.push("plain-layout");
-                outlet.show(ui);
+                children.show(ui);
             },
         ))
         .page("/{id}", page("plain"));
 
     Router::new()
         .layout(Layout::new(
-            |ui: &mut Ui, outlet: Outlet<'_>, State(state): State<&AppState>, nav: Nav<'_>| {
+            |ui: &mut Ui, children: Children<'_>, State(state): State<&AppState>, nav: Nav<'_>| {
                 state.push("root");
                 let commands = core::mem::take(&mut *state.commands.borrow_mut());
                 for command in commands {
                     command(nav);
                 }
-                ViewTransition::slide().duration(1.0).show(ui, outlet);
+                ViewTransition::slide().duration(1.0).show(ui, children);
             },
         ))
         .page("/", page("home"))
@@ -226,8 +226,8 @@ fn the_outgoing_page_keeps_its_opacity() {
     let opacity = Rc::new(RefCell::new(Vec::new()));
     let seen = Rc::clone(&opacity);
     let mut app = Router::new()
-        .layout(Layout::new(|ui: &mut Ui, outlet: Outlet<'_>| {
-            ViewTransition::fade().duration(1.0).show(ui, outlet);
+        .layout(Layout::new(|ui: &mut Ui, children: Children<'_>| {
+            ViewTransition::fade().duration(1.0).show(ui, children);
         }))
         .page(
             "/",
@@ -251,7 +251,7 @@ fn effects_know_the_navigation() {
     let seen = Rc::new(RefCell::new(Vec::new()));
     let log = Rc::clone(&seen);
     let mut app = Router::new()
-        .layout(Layout::new(move |ui: &mut Ui, outlet: Outlet<'_>| {
+        .layout(Layout::new(move |ui: &mut Ui, children: Children<'_>| {
             let log = Rc::clone(&log);
             ViewTransition::custom(move |frame| {
                 let navigation = &frame.navigation;
@@ -260,7 +260,7 @@ fn effects_know_the_navigation() {
                 (Layer::VISIBLE, Layer::VISIBLE)
             })
             .duration(1.0)
-            .show(ui, outlet);
+            .show(ui, children);
         }))
         .page("/", Page::new(|_: &mut Ui| {}))
         .page("/about", Page::new(|_: &mut Ui| {}))

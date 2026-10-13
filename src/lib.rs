@@ -63,15 +63,15 @@
 //! ```
 //! use egui::Ui;
 //! use egui_kit::Router;
-//! use egui_kit::page::{Layout, Outlet, Page};
+//! use egui_kit::page::{Layout, Children, Page};
 //!
 //! fn view(ui: &mut Ui) {
 //!     ui.label("A page");
 //! }
 //!
-//! fn blog_layout(ui: &mut Ui, mut outlet: Outlet) {
+//! fn blog_layout(ui: &mut Ui, mut children: Children) {
 //!     ui.heading("Blog");
-//!     outlet.show(ui);
+//!     children.show(ui);
 //! }
 //!
 //! let blog = Router::new()
@@ -105,14 +105,14 @@
 //!   data as `&D` or `&mut D`.
 //!
 //! A [`Layout`](page::Layout) wraps the pages of a router. It can have a load too, and its view
-//! draws the page through the [`Outlet`](page::Outlet), or animates page changes with a
+//! draws the page through the [`Children`](page::Children), or animates page changes with a
 //! [`ViewTransition`].
 //!
 //! ```
 //! use egui::Ui;
 //! use egui_kit::{Rejection, Router, ViewTransition, error};
 //! use egui_kit::extract::{Nav, Parent, Path};
-//! use egui_kit::page::{Layout, Outlet, Page};
+//! use egui_kit::page::{Layout, Children, Page};
 //!
 //! #[derive(Clone)]
 //! struct Blog {
@@ -123,11 +123,11 @@
 //!     Ok(Blog { posts: vec!["hello".into(), "world".into()] })
 //! }
 //!
-//! fn blog_layout(ui: &mut Ui, outlet: Outlet, blog: &Blog, nav: Nav) {
+//! fn blog_layout(ui: &mut Ui, children: Children, blog: &Blog, nav: Nav) {
 //!     for post in &blog.posts {
 //!         nav.nav_link(ui, post, &format!("/blog/{post}"));
 //!     }
-//!     ViewTransition::slide().show(ui, outlet);
+//!     ViewTransition::slide().show(ui, children);
 //! }
 //!
 //! struct Post {

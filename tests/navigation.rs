@@ -6,7 +6,7 @@ use std::rc::Rc;
 
 use egui::Ui;
 use egui_kit::extract::{Nav, Path, Scroll, State};
-use egui_kit::page::{Layout, Outlet, Page};
+use egui_kit::page::{Children, Layout, Page};
 use egui_kit::{GotoOptions, MemoryHistory, Rejection, Router, RouterApp};
 
 #[derive(Clone, Default)]
@@ -34,9 +34,9 @@ fn page(name: &'static str) -> Page<AppState> {
 
 fn layout(name: &'static str) -> Layout<AppState> {
     Layout::new(
-        move |ui: &mut Ui, mut outlet: Outlet<'_>, State(state): State<&AppState>| {
+        move |ui: &mut Ui, mut children: Children<'_>, State(state): State<&AppState>| {
             state.push(name);
-            outlet.show(ui);
+            children.show(ui);
         },
     )
 }
@@ -67,13 +67,16 @@ fn app(url: &str) -> RouterApp<AppState> {
         .matcher("int", |s| s.parse::<u32>().is_ok())
         .matcher("lang", |s| ["en", "de"].contains(&s))
         .layout(Layout::new(
-            |ui: &mut Ui, mut outlet: Outlet<'_>, State(state): State<&AppState>, nav: Nav<'_>| {
+            |ui: &mut Ui,
+             mut children: Children<'_>,
+             State(state): State<&AppState>,
+             nav: Nav<'_>| {
                 state.push("root");
                 let commands = core::mem::take(&mut *state.commands.borrow_mut());
                 for command in commands {
                     command(nav);
                 }
-                outlet.show(ui);
+                children.show(ui);
             },
         ))
         .page("/", page("home"))

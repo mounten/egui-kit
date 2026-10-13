@@ -1,7 +1,7 @@
 //! View transitions between pages.
 //!
 //! The router keeps the outgoing page alive for the duration of the transition and renders it next
-//! to the incoming one. A [`ViewTransition`] (used in a layout, in place of [`Outlet::show`])
+//! to the incoming one. A [`ViewTransition`] (used in a layout, in place of [`Children::show`])
 //! decides where and how opaque each of the two is drawn.
 //!
 //! The transition starts once all `load`s finished, right before the new page is shown. Layouts
@@ -14,13 +14,13 @@ use std::rc::Rc;
 use egui::{Id, Rect, Ui, UiBuilder, Vec2};
 
 use crate::navigation::{Direction, Navigation};
-use crate::page::Outlet;
+use crate::page::Children;
 
 /// How one of the two pages is drawn in a frame of the transition
 /// (`::view-transition-old` / `::view-transition-new`).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Layer {
-    /// In points, relative to the outlet.
+    /// In points, relative to the children.
     pub offset: Vec2,
     pub opacity: f32,
 }
@@ -38,7 +38,7 @@ pub struct TransitionFrame {
     /// Linear progress, from `0.0` to `1.0`. Apply your own easing.
     pub t: f32,
     pub direction: Direction,
-    /// The size of the outlet.
+    /// The size of the children.
     pub size: Vec2,
     /// The navigation being animated: where from and to, e.g. to slide by the pages' order in a
     /// sidebar rather than by the history's direction.
@@ -47,14 +47,14 @@ pub struct TransitionFrame {
 
 type Effect = Rc<dyn Fn(&TransitionFrame) -> (Layer, Layer)>;
 
-/// Animates page changes inside a layout. Use it instead of [`Outlet::show`]:
+/// Animates page changes inside a layout. Use it instead of [`Children::show`]:
 ///
 /// ```no_run
 /// # use egui_kit::ViewTransition;
-/// # use egui_kit::page::Outlet;
-/// fn layout(ui: &mut egui::Ui, outlet: Outlet) {
+/// # use egui_kit::page::Children;
+/// fn layout(ui: &mut egui::Ui, children: Children) {
 ///     ui.heading("My app"); // shared chrome: stays put
-///     ViewTransition::slide().show(ui, outlet);
+///     ViewTransition::slide().show(ui, children);
 /// }
 /// ```
 ///
@@ -154,14 +154,14 @@ impl ViewTransition {
         self
     }
 
-    /// Shows the outlet, animating from the previous page if this layout is where the current
+    /// Shows the children, animating from the previous page if this layout is where the current
     /// navigation transitions.
-    pub fn show(&self, ui: &mut Ui, mut outlet: Outlet<'_>) {
-        outlet.uses_transitions.set(true);
+    pub fn show(&self, ui: &mut Ui, mut children: Children<'_>) {
+        children.uses_transitions.set(true);
         let rect = ui.available_rect_before_wrap();
-        let outlet_id = ui.id().with("egui_kit_outlet");
+        let children_id = ui.id().with("egui_kit_children");
 
-        let frame = outlet.transition.as_deref().and_then(|transition| {
+        let frame = children.transition.as_deref().and_then(|transition| {
             let state = transition.state();
             let now = ui.input(|i| i.time);
             let started = state.started.get().unwrap_or_else(|| {
@@ -188,8 +188,8 @@ impl ViewTransition {
 
         let Some(frame) = frame else {
             // Same id as during transitions, so widget state survives the end of the animation.
-            let mut page = ui.new_child(UiBuilder::new().id(outlet_id).max_rect(rect));
-            outlet.show(&mut page);
+            let mut page = ui.new_child(UiBuilder::new().id(children_id).max_rect(rect));
+            children.show(&mut page);
             ui.advance_cursor_after_rect(page.min_rect());
             return;
         };
@@ -203,13 +203,13 @@ impl ViewTransition {
         let clip = rect.intersect(ui.clip_rect());
 
         // The outgoing page is drawn first, so the incoming one ends up on top.
-        let mut previous_ui = layer_ui(ui, outlet_id.with("previous"), rect, clip, old);
-        if let Some(transition) = outlet.transition.as_deref_mut() {
+        let mut previous_ui = layer_ui(ui, children_id.with("previous"), rect, clip, old);
+        if let Some(transition) = children.transition.as_deref_mut() {
             transition.render_previous(&mut previous_ui);
         }
 
-        let mut page = layer_ui(ui, outlet_id, rect, clip, new);
-        outlet.show(&mut page);
+        let mut page = layer_ui(ui, children_id, rect, clip, new);
+        children.show(&mut page);
         ui.advance_cursor_after_rect(page.min_rect().translate(-new.offset));
     }
 }
@@ -257,7 +257,7 @@ pub fn prefers_reduced_motion() -> bool {
     }
 }
 
-/// Bookkeeping of a running transition, shared with the outlet that runs it.
+/// Bookkeeping of a running transition, shared with the children that runs it.
 #[derive(Default)]
 pub(crate) struct TransitionState {
     pub(crate) started: Cell<Option<f64>>,
@@ -266,15 +266,15 @@ pub(crate) struct TransitionState {
     pub(crate) done: Cell<bool>,
 }
 
-/// What the outlet of the transitioning layout gets on top of the new page.
-pub(crate) struct OutletTransition<'a> {
+/// What the children of the transitioning layout gets on top of the new page.
+pub(crate) struct ChildrenTransition<'a> {
     pub(crate) previous: &'a mut dyn FnMut(&mut Ui),
     pub(crate) state: &'a TransitionState,
     pub(crate) direction: Direction,
     pub(crate) navigation: &'a Navigation,
 }
 
-/// [`OutletTransition`] behind a trait object, so an [`Outlet`]'s lifetime doesn't have to match it.
+/// [`ChildrenTransition`] behind a trait object, so an [`Children`]'s lifetime doesn't have to match it.
 pub(crate) trait TransitionHandle {
     fn render_previous(&mut self, ui: &mut Ui);
     fn state(&self) -> &TransitionState;
@@ -282,7 +282,7 @@ pub(crate) trait TransitionHandle {
     fn navigation(&self) -> &Navigation;
 }
 
-impl TransitionHandle for OutletTransition<'_> {
+impl TransitionHandle for ChildrenTransition<'_> {
     fn render_previous(&mut self, ui: &mut Ui) {
         (self.previous)(ui);
     }

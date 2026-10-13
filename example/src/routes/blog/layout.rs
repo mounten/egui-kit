@@ -4,7 +4,7 @@
 use egui::Panel;
 use egui_kit::Rejection;
 use egui_kit::extract::{Nav, PageState, PersistentState, State};
-use egui_kit::page::Outlet;
+use egui_kit::page::Children;
 
 use crate::state::{Db, Post, TransitionStyle};
 
@@ -35,7 +35,7 @@ pub async fn load(State(db): State<Db>) -> Result<Data, Rejection> {
 )]
 pub fn view(
     ui: &mut egui::Ui,
-    outlet: Outlet<'_>,
+    children: Children<'_>,
     data: &Data,
     mut sidebar: PageState<'_, Sidebar>,
     style: PersistentState<'_, TransitionStyle>,
@@ -64,5 +64,5 @@ pub fn view(
         });
 
     let transition = style.view_transition();
-    egui::CentralPanel::default().show(ui, |ui| transition.show(ui, outlet));
+    egui::CentralPanel::default().show(ui, |ui| transition.show(ui, children));
 }
