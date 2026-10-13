@@ -4,16 +4,17 @@ use core::any::{Any, TypeId};
 use core::cell::{Cell, Ref, RefCell};
 use core::fmt;
 use core::future::Future;
-use core::hash::{BuildHasher as _, Hash};
+use core::hash::Hash;
 use core::time::Duration;
-use std::hash::RandomState;
 use std::rc::Rc;
-use std::sync::{Arc, LazyLock, Mutex};
+use std::sync::{Arc, Mutex};
 
 use web_time::Instant;
 
 use super::runtime::{self, Abort, BoxFuture, MaybeSend};
-use super::{CACHE_FOR, Entry, context, lock, request_repaint, shared_context, with_registry};
+use super::{
+    CACHE_FOR, Entry, context, hash, lock, request_repaint, shared_context, with_registry,
+};
 use crate::load::Invalidation;
 
 /// Where a fetch puts its result.
@@ -76,6 +77,9 @@ pub enum QueryState<T, E> {
 /// called for every fetch. Keep it where the views can read it (the app state, a
 /// [`PageState`](crate::extract::PageState)…) and read it every frame you show it. Clones share
 /// its state. See the [module docs](crate::remote).
+///
+/// A new query fetches on its first read, so don't make one every frame: for a query made from
+/// inputs that change, keep a [`Live`](super::Live).
 ///
 /// ```
 /// # use egui_kit::remote::{self, Query};
@@ -153,9 +157,7 @@ impl<T: MaybeSend + 'static, E: MaybeSend + 'static> Query<T, E> {
     /// [Keys, dependencies and refreshes](crate::remote#keys-dependencies-and-refreshes).
     #[must_use]
     pub fn key(mut self, key: impl Hash) -> Self {
-        /// Hashes the keys, the same way for the whole process.
-        static HASHER: LazyLock<RandomState> = LazyLock::new(RandomState::new);
-        let id = (TypeId::of::<(T, E)>(), HASHER.hash_one(key));
+        let id = (TypeId::of::<(T, E)>(), hash(key));
         let shared = with_registry(|registry| {
             if let Some(entry) = registry.cache.get(&id) {
                 return Rc::clone(entry).as_any().downcast().ok();
@@ -284,23 +286,20 @@ impl<T: MaybeSend + 'static, E: MaybeSend + 'static> Query<T, E> {
         state.version += 1;
     }
 
+    /// The value and whether the last fetch failed, without reading it: no fetch starts, and a
+    /// cached value isn't kept longer.
+    pub(super) fn peek(&self) -> (Option<Rc<T>>, bool) {
+        let mut state = self.state.borrow_mut();
+        settle(&mut state, Instant::now());
+        (state.value.clone(), state.error.is_some())
+    }
+
     /// Picks up a finished fetch, and starts one if due.
     fn read(&self) -> Ref<'_, State<T, E>> {
         let now = Instant::now();
         let mut state = self.state.borrow_mut();
         state.read_at = now;
-        if let Some(result) = state.run.as_ref().and_then(|run| lock(&run.slot).take()) {
-            state.run = None;
-            state.fetched_at = Some(now);
-            match result {
-                Ok(value) => {
-                    state.value = Some(Rc::new(value));
-                    state.error = None;
-                    state.version += 1;
-                }
-                Err(error) => state.error = Some(Rc::new(error)),
-            }
-        }
+        settle(&mut state, now);
         if state.run.is_none() && self.due(&state, now) {
             state.stale = false;
             state.run = Some(self.start());
@@ -343,6 +342,22 @@ impl<T: MaybeSend + 'static, E: MaybeSend + 'static> Query<T, E> {
             }
         });
         Run { slot, _task: task }
+    }
+}
+
+/// Picks up a finished fetch.
+fn settle<T, E>(state: &mut State<T, E>, now: Instant) {
+    if let Some(result) = state.run.as_ref().and_then(|run| lock(&run.slot).take()) {
+        state.run = None;
+        state.fetched_at = Some(now);
+        match result {
+            Ok(value) => {
+                state.value = Some(Rc::new(value));
+                state.error = None;
+                state.version += 1;
+            }
+            Err(error) => state.error = Some(Rc::new(error)),
+        }
     }
 }
 

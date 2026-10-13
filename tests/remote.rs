@@ -12,7 +12,7 @@ use std::time::Instant;
 use egui::Ui;
 use egui_kit::extract::State;
 use egui_kit::page::Page;
-use egui_kit::remote::{self, Command, Query, QueryState};
+use egui_kit::remote::{self, Command, Live, Query, QueryState};
 use egui_kit::{MemoryHistory, Rejection, Router, RouterApp};
 use tokio::sync::watch;
 
@@ -217,6 +217,135 @@ fn commands_report_whether_they_are_pending_and_how_they_ended() {
     assert_eq!(command.error().as_deref().map(String::as_str), Some("no"));
     command.run(pending());
     assert!(command.result().is_none(), "forgotten when it runs again");
+}
+
+/// A query for `value` that answers once `gate` opens.
+fn gated(value: u32, gate: &watch::Receiver<bool>) -> Query<u32, String> {
+    let gate = gate.clone();
+    remote::query(move || {
+        let mut gate = gate.clone();
+        async move {
+            gate.wait_for(|open| *open).await.ok();
+            Ok(value)
+        }
+    })
+}
+
+#[test]
+fn live_queries_are_made_again_only_when_their_inputs_change() {
+    let fetches = Arc::default();
+    let made = Cell::new(0);
+    let mut live: Live<u32, String> = remote::live();
+    let (token, from) = ("secret".to_owned(), "2026-10-12".to_owned());
+    for _ in 0..50 {
+        live.update((&token, &from), || {
+            made.set(made.get() + 1);
+            counting(&fetches, false)
+        });
+    }
+    wait_until(|| live.data().is_some());
+    assert_eq!(made.get(), 1, "one query for the same inputs");
+    assert_eq!(fetches.load(Ordering::SeqCst), 1, "fetched once");
+    assert!(!live.is_previous());
+
+    let to = "2026-10-19".to_owned();
+    live.update((&token, &to), || {
+        made.set(made.get() + 1);
+        counting(&fetches, false)
+    });
+    assert_eq!(made.get(), 2, "another query for other inputs");
+    assert!(
+        matches!(live.state(), QueryState::Loading),
+        "without the previous value"
+    );
+    assert!(!live.is_previous());
+    wait_until(|| live.data().is_some());
+    assert_eq!(fetches.load(Ordering::SeqCst), 2);
+}
+
+#[test]
+fn live_queries_can_keep_the_previous_value_while_loading() {
+    let (open, gate) = watch::channel(false);
+    let mut live = remote::live().keep_previous();
+    live.update(1, || gated(1, &watch::channel(true).1));
+    wait_until(|| live.data().is_some());
+
+    live.update(2, || gated(2, &gate));
+    assert!(matches!(live.state(), QueryState::Ready(value) if *value == 1));
+    assert_eq!(live.data().as_deref(), Some(&1));
+    assert!(live.is_previous(), "from the inputs before");
+    assert!(live.is_fetching());
+
+    open.send(true).unwrap();
+    wait_until(|| live.data().as_deref() == Some(&2));
+    assert!(!live.is_previous());
+    live.update(2, || unreachable!("the same inputs"));
+    assert_eq!(live.data().as_deref(), Some(&2));
+}
+
+#[test]
+fn live_queries_dont_keep_the_previous_value_past_a_failure() {
+    let fetches = Arc::default();
+    let mut live = remote::live().keep_previous();
+    live.update(1, || counting(&fetches, false));
+    wait_until(|| live.data().is_some());
+    // The second fetch fails.
+    live.update(2, || counting(&fetches, true));
+    wait_until(|| live.error().is_some());
+    assert!(matches!(live.state(), QueryState::Failed(_)));
+    assert_eq!(live.data(), None, "the value of the inputs before is gone");
+    assert!(!live.is_previous());
+}
+
+#[test]
+fn debounced_live_queries_wait_for_the_inputs_to_settle() {
+    let fetches = Arc::default();
+    let made = Cell::new(Vec::new());
+    let mut live: Live<u32, String> = remote::live().debounce(Duration::from_millis(100));
+    let update = |live: &mut Live<u32, String>, inputs: &str| {
+        live.update(inputs, || {
+            let mut list = made.take();
+            list.push(inputs.to_owned());
+            made.set(list);
+            counting(&fetches, false)
+        })
+        .is_previous()
+    };
+
+    for text in ["a", "ab", "abc"] {
+        assert!(update(&mut live, text), "waiting");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(live.query().is_none(), "nothing made while they change");
+    assert!(matches!(live.state(), QueryState::Loading));
+
+    wait_until(|| !update(&mut live, "abc"));
+    assert_eq!(made.take(), ["abc"], "made once, for the last inputs");
+    wait_until(|| live.data().is_some());
+    assert_eq!(fetches.load(Ordering::SeqCst), 1);
+
+    // The query before shows while the next inputs settle.
+    assert!(update(&mut live, "abcd"));
+    assert_eq!(live.data().as_deref(), Some(&1));
+    // Back to the inputs of the query made: nothing to wait for.
+    assert!(!update(&mut live, "abc"));
+    std::thread::sleep(Duration::from_millis(150));
+    update(&mut live, "abc");
+    assert_eq!(made.take(), Vec::<String>::new(), "nothing made again");
+}
+
+#[test]
+fn clearing_a_live_query_drops_it() {
+    let fetches = Arc::default();
+    let mut live = remote::live().keep_previous();
+    live.update("a", || counting(&fetches, false));
+    wait_until(|| live.data().is_some());
+    live.clear();
+    assert!(live.query().is_none());
+    assert_eq!(live.data(), None);
+    assert!(matches!(live.state(), QueryState::Loading));
+    live.update("a", || counting(&fetches, false));
+    assert!(live.query().is_some(), "made again");
 }
 
 #[derive(Clone, Default)]
