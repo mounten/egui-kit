@@ -8,7 +8,8 @@
 //!
 //! - A [`Query`] is async data: it fetches on its first read, and can be
 //!   [refreshed](Query::refresh), [refetched periodically](Query::refetch_every) and
-//!   [cached](Query::key), so that queries with the same key share one result.
+//!   [cached](Query::key), so that queries with the same key share one result. A [`Live`]
+//!   makes one from inputs that change.
 //! - A [`Command`] is an async mutation: [run](Command::run) it, and see whether it's pending
 //!   and how it ended. Once it succeeded, it [refreshes](Command::refreshes) the loads and
 //!   queries that depend on what it changed.
@@ -171,6 +172,47 @@
 //! The [`RouterApp`] applies invalidations at its next frame. A query that is invalidated keeps
 //! its value, and refetches the next time it is read.
 //!
+//! # Queries from changing inputs
+//!
+//! A query is made from its inputs: a date range, a search text, a form to check. A new query
+//! fetches on its first read, so a view can't make one from its current inputs every frame: it
+//! would fetch every frame. Keep a [`Live`] instead and [update](Live::update) it every frame
+//! with the inputs: it makes a new query only when they changed. It can also keep showing the
+//! previous value while the new one loads, and wait for the inputs to settle (a search being
+//! typed) before it asks.
+//!
+//! ```
+//! # use egui_kit::remote::{self, Live, Query};
+//! # #[derive(Clone)]
+//! # struct Api;
+//! # impl Api {
+//! #     async fn week(&self, _monday: u32) -> Result<Vec<String>, String> { Ok(Vec::new()) }
+//! # }
+//! fn week(api: &Api, monday: u32) -> Query<Vec<String>, String> {
+//!     let api = api.clone();
+//!     remote::query(move || {
+//!         let api = api.clone();
+//!         async move { api.week(monday).await }
+//!     })
+//!     .key(("week", monday))
+//! }
+//!
+//! fn calendar(
+//!     ui: &mut egui::Ui,
+//!     api: &Api,
+//!     monday: u32,
+//!     appointments: &mut Live<Vec<String>, String>,
+//! ) {
+//!     // `appointments` is `remote::live().keep_previous()`: the week before stays until the
+//!     // next one arrives.
+//!     if let Some(list) = appointments.update(monday, || week(api, monday)).data() {
+//!         for appointment in list.iter() {
+//!             ui.label(appointment);
+//!         }
+//!     }
+//! }
+//! ```
+//!
 //! # Runtimes
 //!
 //! Natively, queries and commands run on a Tokio runtime, so their futures must be `Send` (see
@@ -201,19 +243,23 @@
 //! [`Nav::invalidate`]: crate::extract::Nav::invalidate
 
 mod command;
+mod live;
 mod query;
 mod runtime;
 
 use core::any::{Any, TypeId};
 use core::cell::RefCell;
+use core::hash::{BuildHasher as _, Hash};
 use core::time::Duration;
 use std::collections::HashMap;
+use std::hash::RandomState;
 use std::rc::{Rc, Weak};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, LazyLock, Mutex, MutexGuard, PoisonError};
 
 use web_time::Instant;
 
 pub use command::{Command, command};
+pub use live::{Live, live};
 pub use query::{Query, QueryState, query};
 pub use runtime::MaybeSend;
 pub(crate) use runtime::enter;
@@ -278,6 +324,12 @@ fn request_repaint(ctx: &Mutex<Option<egui::Context>>) {
     if let Some(ctx) = ctx {
         ctx.request_repaint();
     }
+}
+
+/// Hashes query keys and [`Live`] inputs, the same way for the whole process.
+fn hash(value: impl Hash) -> u64 {
+    static HASHER: LazyLock<RandomState> = LazyLock::new(RandomState::new);
+    HASHER.hash_one(value)
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
