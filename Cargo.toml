@@ -1,6 +1,6 @@
 [package]
 name = "egui-kit"
-version = "0.3.1"
+version = "0.4.0"
 edition = "2024"
 description = "A SvelteKit-inspired router for egui with typed loaders, layouts, hooks, error pages and browser history."
 license = "MIT OR Apache-2.0"
