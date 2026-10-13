@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1](https://github.com/mounten/egui-kit/compare/v0.3.0...v0.3.1) - 2026-10-13
+
+### Added
+
+- *(remote)* add Live for queries from changing inputs ([#41](https://github.com/mounten/egui-kit/pull/41))
+- *(remote)* hash query keys without requiring `Debug` ([#38](https://github.com/mounten/egui-kit/pull/38))
+- *(remote)* add `remote::set_context` to wake egui before the router's first frame ([#37](https://github.com/mounten/egui-kit/pull/37))
+
+### Fixed
+
+- *(remote)* prune dropped queries at the end of a frame ([#36](https://github.com/mounten/egui-kit/pull/36))
+- *(remote)* share whether a query was read between its clones ([#35](https://github.com/mounten/egui-kit/pull/35))
+
 ## [0.3.0](https://github.com/mounten/egui-kit/compare/v0.2.0...v0.3.0) - 2026-10-12
 
 ### Added
