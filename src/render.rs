@@ -154,7 +154,13 @@ impl<S> Mounted<S> {
             ),
             Content::Error {
                 view: None, error, ..
-            } => default_error_view(ui, Nav { frame: &frame }, error),
+            } => {
+                let nav = Nav {
+                    frame: &frame,
+                    depth: usize::MAX,
+                };
+                default_error_view(ui, nav, error);
+            }
         };
         let chain = Chain {
             levels: &levels[from..depth],

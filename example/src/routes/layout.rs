@@ -1,4 +1,5 @@
-//! Root layout: a top bar with history buttons, the url and navigation links.
+//! Root layout: a top bar with history buttons, the url and navigation links. It also sets the
+//! default title of the window or tab, which pages can replace with their own.
 //!
 //! The top bar is shared by all pages, so it stays put while the pages below it transition
 //! (what the SvelteKit blog post achieves with `view-transition-name: header`).
@@ -16,6 +17,7 @@ pub fn view(
     mut style: PersistentState<'_, TransitionStyle>,
     nav: Nav<'_>,
 ) {
+    nav.set_title("egui-kit example");
     Panel::top("top_bar").show(ui, |ui| {
         ui.horizontal(|ui| {
             if ui
