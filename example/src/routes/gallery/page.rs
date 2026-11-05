@@ -2,8 +2,8 @@
 
 use core::time::Duration;
 
-use egui_kit::Rejection;
 use egui_kit::extract::{HistoryState, Nav, Scroll, State};
+use egui_kit::{Rejection, href};
 
 use super::swatch;
 use crate::state::{Db, Photo};
@@ -44,7 +44,7 @@ pub fn view(
                     .on_hover_text(&photo.title)
                     .clicked()
                 {
-                    nav.push_state(format!("/gallery/{}", photo.id), OpenPhoto(photo.id));
+                    nav.push_state(photo_url(photo.id), OpenPhoto(photo.id));
                 }
             }
         });
@@ -66,12 +66,12 @@ pub fn view(
                         .clicked()
                     {
                         let target = target.expect("button is enabled");
-                        nav.replace_state(format!("/gallery/{}", target.id), OpenPhoto(target.id));
+                        nav.replace_state(photo_url(target.id), OpenPhoto(target.id));
                     }
                 }
                 ui.separator();
                 if ui.button("Open page").clicked() {
-                    nav.goto(format!("/gallery/{}", photo.id));
+                    nav.goto(photo_url(photo.id));
                 }
                 ui.button("Close").clicked()
             })
@@ -81,4 +81,8 @@ pub fn view(
             nav.back();
         }
     }
+}
+
+fn photo_url(photo: u32) -> String {
+    href("/gallery/{id}").param("id", photo).into()
 }

@@ -3,7 +3,7 @@
 use core::time::Duration;
 
 use egui_kit::extract::{Nav, Path, State};
-use egui_kit::{Rejection, error};
+use egui_kit::{Rejection, error, href};
 
 use crate::state::{Author, Db, Post};
 use crate::util::sleep;
@@ -30,20 +30,19 @@ pub fn view(ui: &mut egui::Ui, data: &Data, nav: Nav<'_>) {
     ui.heading(&data.post.title);
     ui.horizontal(|ui| {
         ui.label("by");
-        nav.link(
-            ui,
-            data.author.name,
-            &format!("/authors/{}", data.author.id),
-        );
+        let author = href("/authors/{id=int}").param("id", data.author.id);
+        nav.link(ui, data.author.name, &author.to_string());
         ui.separator();
-        nav.link(ui, "Print view", &format!("/blog/{}/print", data.post.slug));
+        let print = href("/blog/{slug}/print").param("slug", &data.post.slug);
+        nav.link(ui, "Print view", &print.to_string());
     });
     ui.add_space(8.0);
     ui.label(&data.post.body);
     ui.add_space(8.0);
     ui.horizontal(|ui| {
         for tag in &data.post.tags {
-            nav.link(ui, format!("#{tag}"), &format!("/blog?tag={tag}"));
+            let url = href("/blog").query(&[("tag", tag)]);
+            nav.link(ui, format!("#{tag}"), &url.to_string());
         }
     });
 }

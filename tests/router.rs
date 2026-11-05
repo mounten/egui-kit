@@ -8,7 +8,9 @@ use std::rc::Rc;
 use egui::Ui;
 use egui_kit::extract::{HistoryState, Nav, Path, Query, State};
 use egui_kit::page::{Children, Layout, Page};
-use egui_kit::{MemoryHistory, Rejection, Request, RouteError, Router, RouterApp, error, redirect};
+use egui_kit::{
+    MemoryHistory, Rejection, Request, RouteError, Router, RouterApp, error, href, redirect,
+};
 use serde::Deserialize;
 
 #[derive(Clone, Default)]
@@ -430,4 +432,26 @@ fn fragments_are_ignored_by_matching() {
         assert_eq!(nav.fragment(), Some("results"));
         assert!(nav.is_active("/search#x"), "the fragment is ignored");
     });
+}
+
+#[test]
+fn href_round_trips_through_the_router() {
+    async fn load(Path(value): Path<String>) -> Result<String, Rejection> {
+        Ok(value)
+    }
+    let value = "a b/c?d#e%20f";
+    let url = href("/blog/{slug}").param("slug", value).to_string();
+    let state = AppState::default();
+    let mut app = Router::new()
+        .page(
+            "/blog/{slug}",
+            Page::with_load(
+                load,
+                |_: &mut Ui, State(state): State<&AppState>, value: &String| state.push(value),
+            ),
+        )
+        .with_state_and_history(state, MemoryHistory::new(url.clone()));
+    assert_eq!(app.matches(&url), Some("/blog/{slug}"));
+    let ctx = egui::Context::default();
+    assert_eq!(frame(&ctx, &mut app), [value]);
 }

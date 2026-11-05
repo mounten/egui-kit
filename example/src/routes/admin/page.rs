@@ -8,9 +8,9 @@
 //! background while the view shows that it's pending, and refreshes everything that depends on
 //! the posts once done, including the post count query shown here and in the top bar.
 
-use egui_kit::Rejection;
 use egui_kit::extract::{Nav, PageState, State};
 use egui_kit::remote::{self, Command, QueryState};
+use egui_kit::{Rejection, href};
 
 use crate::state::{AppState, POSTS, Session};
 
@@ -95,9 +95,9 @@ pub fn view(
         ui.colored_label(ui.visuals().error_fg_color, &*error);
     }
     // The command already refreshed what depends on the posts.
-    if let Some(Ok(slug)) = draft.publish.take_result() {
+    if let Some(Ok(published)) = draft.publish.take_result() {
         *draft = Draft::default();
-        nav.goto(format!("/blog/{slug}"));
+        nav.goto(href("/blog/{slug}").param("slug", published));
     }
 
     // Decided at the end of the frame, after a possible publish emptied the draft.

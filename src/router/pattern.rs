@@ -12,9 +12,27 @@
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use percent_encoding::percent_decode_str;
+use percent_encoding::{AsciiSet, CONTROLS, percent_decode_str, utf8_percent_encode};
 
 use crate::request::Param;
+
+/// What a parameter value can't contain unencoded in a path segment. Anything outside ASCII is
+/// encoded too; [`decode`] reverses it.
+const SEGMENT: &AsciiSet = &CONTROLS
+    .add(b' ')
+    .add(b'"')
+    .add(b'#')
+    .add(b'%')
+    .add(b'/')
+    .add(b'<')
+    .add(b'>')
+    .add(b'?')
+    .add(b'\\')
+    .add(b'`')
+    .add(b'^')
+    .add(b'{')
+    .add(b'|')
+    .add(b'}');
 
 /// Accepts or rejects a path segment, see [`Router::matcher`](crate::Router::matcher).
 pub(crate) type Matcher = Rc<dyn Fn(&str) -> bool>;
@@ -92,6 +110,12 @@ impl Pattern {
         &self.raw
     }
 
+    pub(crate) fn has_param(&self, name: &str) -> bool {
+        self.segments
+            .iter()
+            .any(|segment| segment.param_name() == Some(name))
+    }
+
     /// The number of parameters, i.e. the length of `Match::params`.
     pub(crate) fn param_count(&self) -> usize {
         self.segments.iter().filter_map(Segment::param_name).count()
@@ -123,6 +147,49 @@ impl Pattern {
                     (Segment::Wildcard(_), Segment::Wildcard(_)) => true,
                     _ => false,
                 })
+    }
+
+    /// The path with the parameters filled in, percent-encoded. Optional parameters without a
+    /// value are left out, and a wildcard's value keeps its slashes.
+    ///
+    /// Panics if a required parameter is missing.
+    pub(crate) fn fill(&self, params: &[(String, String)]) -> String {
+        let value = |name: &str| {
+            params
+                .iter()
+                .find(|(param, _)| param == name)
+                .map(|(_, value)| value.as_str())
+        };
+        let mut path = String::new();
+        for segment in &self.segments {
+            let part = match segment {
+                Segment::Static(part) => part.clone(),
+                Segment::Param { name, .. } => {
+                    let value = value(name).unwrap_or_else(|| {
+                        panic!("`{}` is missing the parameter `{name}`", self.raw)
+                    });
+                    encode(value)
+                }
+                Segment::Optional { name, .. } => match value(name) {
+                    Some(value) => encode(value),
+                    None => continue,
+                },
+                Segment::Wildcard(name) => {
+                    let parts: Vec<_> =
+                        split(value(name).unwrap_or_default()).map(encode).collect();
+                    if parts.is_empty() {
+                        continue;
+                    }
+                    parts.join("/")
+                }
+            };
+            path.push('/');
+            path.push_str(&part);
+        }
+        if path.is_empty() {
+            path.push('/');
+        }
+        path
     }
 
     pub(crate) fn matches(&self, path: &str, matchers: &Matchers) -> Option<Match> {
@@ -253,6 +320,10 @@ fn split(path: &str) -> impl Iterator<Item = &str> {
     path.split('/').filter(|s| !s.is_empty())
 }
 
+fn encode(value: &str) -> String {
+    utf8_percent_encode(value, SEGMENT).to_string()
+}
+
 fn decode(segment: &str) -> String {
     percent_decode_str(segment).decode_utf8_lossy().into_owned()
 }
@@ -376,6 +447,48 @@ mod tests {
         assert_eq!(join("/", "/"), "/");
         assert_eq!(join("/blog", "/"), "/blog");
         assert_eq!(join("/blog/", "{slug}"), "/blog/{slug}");
+    }
+
+    fn fill(pattern: &str, params: &[(&str, &str)]) -> String {
+        let params: Vec<_> = params
+            .iter()
+            .map(|(name, value)| ((*name).to_owned(), (*value).to_owned()))
+            .collect();
+        Pattern::parse(pattern).fill(&params)
+    }
+
+    #[test]
+    fn filling() {
+        assert_eq!(fill("/", &[]), "/");
+        assert_eq!(fill("/about", &[]), "/about");
+        assert_eq!(fill("/users/{id}", &[("id", "7")]), "/users/7");
+        assert_eq!(fill("/users/{id=int}", &[("id", "7")]), "/users/7");
+        assert_eq!(fill("/{?lang}/about", &[("lang", "de")]), "/de/about");
+        assert_eq!(fill("/{?lang=lang}/about", &[]), "/about");
+        assert_eq!(
+            fill("/files/{*rest}", &[("rest", "a b/c")]),
+            "/files/a%20b/c"
+        );
+        assert_eq!(fill("/files/{*rest}", &[("rest", "")]), "/files");
+        assert_eq!(fill("/files/{*rest}", &[]), "/files");
+        assert_eq!(fill("/{x}", &[("x", "ü")]), "/%C3%BC");
+    }
+
+    #[test]
+    fn filled_values_decode_to_themselves() {
+        let value = " /?#%\"<>\\`^{|}ü\u{7f}+&=;:@!$'()*,";
+        let path = fill("/posts/{slug}", &[("slug", value)]);
+        assert_eq!(path.matches('/').count(), 2, "{path}");
+        let m = Pattern::parse("/posts/{slug}")
+            .matches(&path, &matchers())
+            .unwrap();
+        assert_eq!(params(&m), [("slug", Some(value))]);
+    }
+
+    #[test]
+    #[should_panic(expected = "`/users/{id}` is missing the parameter `id`")]
+    fn filling_requires_params() {
+        fill("/users/{id}", &[]);
     }
 
     #[test]
