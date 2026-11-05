@@ -58,7 +58,9 @@
 //! | `{*path}` | the rest of the path (last segment only) |
 //!
 //! When several routes match, static segments win over parameters with a matcher, which win over
-//! plain parameters.
+//! plain parameters. A `#fragment` takes no part in matching or loading: going to `/docs#install`
+//! from `/docs` only adds a history entry, and the page reads it with
+//! [`Nav::fragment`](extract::Nav::fragment).
 //!
 //! ```
 //! use egui::Ui;

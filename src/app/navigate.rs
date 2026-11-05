@@ -6,6 +6,7 @@ use crate::extract::{PageScroll, ViewStore};
 use crate::load::Outcome;
 use crate::navigation::NavigationKind;
 use crate::render::{Content, error_view};
+use crate::request::split_fragment;
 use crate::router::{Level, Target};
 use crate::session::Visit;
 
@@ -25,6 +26,9 @@ pub(super) struct Pending<S> {
     pub(super) job: Job<S>,
     /// The url that was asked for, before any redirects.
     requested: String,
+    /// The `#fragment` of the url being loaded (of the redirect target, after a redirect), added
+    /// to its history entry.
+    fragment: Option<String>,
     kind: NavKind,
     options: GotoOptions,
     redirects: u8,
@@ -49,6 +53,7 @@ impl<S: Clone + 'static> RouterApp<S> {
     /// A navigation asked for by the app (links, `goto`), unless the page blocks it.
     pub(super) fn request_goto(&mut self, url: &str, options: GotoOptions) {
         let to = Request::new(url).untracked_url();
+        let fragment = split_fragment(url).1;
         // Already on its way there: restarting would cancel the loads, which never finish if
         // the view asks again every frame.
         if self.pending.as_ref().is_some_and(|pending| {
@@ -59,7 +64,7 @@ impl<S: Clone + 'static> RouterApp<S> {
         let same_url = self
             .mounted
             .as_ref()
-            .is_some_and(|mounted| mounted.url == to);
+            .is_some_and(|mounted| Request::new(&mounted.url).untracked_url() == to);
         // Already there: the page keeps its state, and a navigation elsewhere that is still
         // loading is abandoned. `invalidate_all` asks for a reload, though.
         if same_url && !options.invalidate_all {
@@ -68,6 +73,13 @@ impl<S: Clone + 'static> RouterApp<S> {
             }) {
                 self.pending = None;
                 self.nav.loading = None;
+            }
+            // Only the fragment changes: a history entry for the same page, like a browser.
+            if let Some(mounted) = &self.mounted
+                && split_fragment(&mounted.url).1 != fragment
+            {
+                let state = mounted.history_state.clone();
+                self.shallow(with_fragment(&to, fragment), state, !options.replace_state);
             }
             return;
         }
@@ -143,6 +155,7 @@ impl<S: Clone + 'static> RouterApp<S> {
             Some(replaced) => replaced.invalidation.merge(invalidation),
             None => invalidation,
         };
+        let fragment = split_fragment(url).1.map(str::to_owned);
         let (entry, request) = self.table.resolve(url);
         let url = request.untracked_url();
         let preloaded = (invalidation == Invalidation::None)
@@ -162,6 +175,7 @@ impl<S: Clone + 'static> RouterApp<S> {
         self.pending = Some(Pending {
             job,
             requested: url,
+            fragment,
             kind,
             options,
             redirects,
@@ -176,6 +190,7 @@ impl<S: Clone + 'static> RouterApp<S> {
         let Pending {
             job,
             requested,
+            fragment,
             kind,
             options,
             redirects,
@@ -215,9 +230,10 @@ impl<S: Clone + 'static> RouterApp<S> {
         };
 
         let url = job.request.untracked_url();
+        let entry_url = with_fragment(&url, fragment.as_deref());
         match kind {
-            NavKind::Push => self.key = self.history.push(&url),
-            NavKind::Replace => self.history.replace(&url),
+            NavKind::Push => self.key = self.history.push(&entry_url),
+            NavKind::Replace => self.history.replace(&entry_url),
             NavKind::Silent => {}
         }
 
@@ -365,6 +381,14 @@ impl<S: Clone + 'static> RouterApp<S> {
         if let Some(meta) = self.session.get_mut(self.shown_key) {
             meta.scroll = Some(previous.scroll.offset.get());
         }
+    }
+}
+
+/// `url` with `#fragment` appended, if any.
+fn with_fragment(url: &str, fragment: Option<&str>) -> String {
+    match fragment {
+        Some(fragment) => format!("{url}#{fragment}"),
+        None => url.to_owned(),
     }
 }
 

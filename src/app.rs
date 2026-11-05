@@ -340,17 +340,27 @@ impl<S: Clone + 'static> RouterApp<S> {
             self.ignored_pops -= 1;
             return;
         }
-        let meta = self.session.get(entry.key);
-        if let (Some(mounted), Some(meta)) = (&mut self.mounted, meta)
-            && meta.page == mounted.id
-        {
-            self.pending = None;
-            self.nav.loading = None;
-            self.key = entry.key;
-            self.shown_key = entry.key;
-            mounted.url = entry.url;
-            mounted.history_state = meta.state.clone();
-            return;
+        if let Some(mounted) = &mut self.mounted {
+            let state = match self.session.get(entry.key) {
+                Some(meta) if meta.page == mounted.id => Some(meta.state.clone()),
+                Some(_) => None,
+                // A new entry for the page's url, e.g. the user edited its `#hash`: adopt it.
+                None => (Request::new(&entry.url).untracked_url()
+                    == Request::new(&mounted.url).untracked_url())
+                .then(|| {
+                    self.session.record(entry.key, mounted.id, None);
+                    None
+                }),
+            };
+            if let Some(state) = state {
+                self.pending = None;
+                self.nav.loading = None;
+                self.key = entry.key;
+                self.shown_key = entry.key;
+                mounted.url = entry.url;
+                mounted.history_state = state;
+                return;
+            }
         }
 
         let direction = self.session.direction(self.shown_key, entry.key);

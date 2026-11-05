@@ -316,7 +316,9 @@ fn read_location(mode: &HistoryMode) -> String {
                     .to_owned(),
                 _ => path,
             };
-            format!("{path}{}", location.search().unwrap_or_default())
+            let search = location.search().unwrap_or_default();
+            let hash = location.hash().unwrap_or_default();
+            format!("{path}{search}{hash}")
         }
     }
 }

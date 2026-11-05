@@ -418,3 +418,16 @@ fn sixteen_extractors() {
     let ctx = egui::Context::default();
     assert_eq!(frame(&ctx, &mut app), ["load:7", "layout", "view:7"]);
 }
+
+#[test]
+fn fragments_are_ignored_by_matching() {
+    let ctx = egui::Context::default();
+    let mut app = app(AppState::default(), "/search?q=egui#results");
+    assert_eq!(frame(&ctx, &mut app), ["root-layout", "search:egui"]);
+    assert_eq!(app.request().unwrap().query(), Some("q=egui"));
+    assert_eq!(app.matches("/photos/3#info"), Some("/photos/{id}"));
+    act(&ctx, &mut app, |nav| {
+        assert_eq!(nav.fragment(), Some("results"));
+        assert!(nav.is_active("/search#x"), "the fragment is ignored");
+    });
+}

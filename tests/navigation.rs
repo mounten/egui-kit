@@ -1,13 +1,15 @@
 //! Navigation features: blocking, `after_navigate`, scroll restoration, matchers,
-//! optional parameters and layout resets.
+//! optional parameters, layout resets and fragments.
 
 use core::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use egui::Ui;
-use egui_kit::extract::{Nav, Path, Scroll, State};
+use egui_kit::extract::{Nav, PageState, Path, Scroll, State};
 use egui_kit::page::{Children, Layout, Page};
-use egui_kit::{GotoOptions, MemoryHistory, Rejection, Router, RouterApp};
+use egui_kit::{
+    EntryKey, GotoOptions, History, HistoryEntry, MemoryHistory, Rejection, Router, RouterApp,
+};
 
 #[derive(Clone, Default)]
 struct AppState {
@@ -274,4 +276,140 @@ fn layout_resets() {
     assert_eq!(frame(&ctx, &mut app)[1..], ["root", "print"]);
     app.goto("/docs/api/plain");
     assert_eq!(frame(&ctx, &mut app)[1..], ["root", "docs-layout", "plain"]);
+}
+
+/// A `MemoryHistory` in which the test can play the user editing the address bar, which adds an
+/// entry the router doesn't know.
+#[derive(Clone)]
+struct EditableHistory(Rc<RefCell<(MemoryHistory, Option<HistoryEntry>)>>);
+
+impl EditableHistory {
+    fn new(url: &str) -> Self {
+        Self(Rc::new(RefCell::new((MemoryHistory::new(url), None))))
+    }
+
+    fn edit(&self, url: &str) {
+        let (history, popped) = &mut *self.0.borrow_mut();
+        history.push(url);
+        *popped = Some(history.current());
+    }
+
+    fn urls(&self) -> Vec<String> {
+        let history = &self.0.borrow().0;
+        history.entries().iter().map(|e| e.url.clone()).collect()
+    }
+}
+
+impl History for EditableHistory {
+    fn current(&self) -> HistoryEntry {
+        self.0.borrow().0.current()
+    }
+
+    fn push(&mut self, url: &str) -> EntryKey {
+        self.0.borrow_mut().0.push(url)
+    }
+
+    fn replace(&mut self, url: &str) {
+        self.0.borrow_mut().0.replace(url);
+    }
+
+    fn back(&mut self) {
+        self.0.borrow_mut().0.back();
+    }
+
+    fn forward(&mut self) {
+        self.0.borrow_mut().0.forward();
+    }
+
+    fn can_go_back(&self) -> bool {
+        self.0.borrow().0.can_go_back()
+    }
+
+    fn can_go_forward(&self) -> bool {
+        self.0.borrow().0.can_go_forward()
+    }
+
+    fn poll(&mut self, ctx: &egui::Context) -> Option<HistoryEntry> {
+        let (history, popped) = &mut *self.0.borrow_mut();
+        popped.take().or_else(|| history.poll(ctx))
+    }
+}
+
+/// `/page` counts its loads and the frames its instance was drawn, and shows the fragment.
+fn fragment_app(history: EditableHistory) -> RouterApp<AppState> {
+    async fn load(State(state): State<AppState>) -> Result<(), Rejection> {
+        state.push("load");
+        Ok(())
+    }
+    let view = |_: &mut Ui,
+                State(state): State<&AppState>,
+                nav: Nav<'_>,
+                mut frames: PageState<'_, u32>| {
+        *frames += 1;
+        state.push(format!(
+            "page:{}:{}",
+            *frames,
+            nav.fragment().unwrap_or("-")
+        ));
+    };
+    Router::new()
+        .page("/", page("home"))
+        .page("/{?lang=lang}/about", page("about"))
+        .matcher("lang", |s| ["en", "de"].contains(&s))
+        .page("/page", Page::with_load(load, view))
+        .with_state_and_history(AppState::default(), history)
+}
+
+#[test]
+fn fragments_dont_affect_matching() {
+    let ctx = egui::Context::default();
+    let history = EditableHistory::new("/about#team");
+    let mut app = fragment_app(history.clone());
+    assert_eq!(frame(&ctx, &mut app), ["about"]);
+    assert_eq!(app.url(), Some("/about#team"));
+    assert_eq!(app.matches("/de/about#team"), Some("/{?lang=lang}/about"));
+
+    // A navigation keeps the fragment in its history entry.
+    app.goto("/page#a");
+    assert_eq!(frame(&ctx, &mut app), ["load", "page:1:a"]);
+    assert_eq!(history.urls(), ["/about#team", "/page#a"]);
+}
+
+#[test]
+fn going_to_a_fragment_keeps_the_page() {
+    let ctx = egui::Context::default();
+    let history = EditableHistory::new("/page");
+    let mut app = fragment_app(history.clone());
+    assert_eq!(frame(&ctx, &mut app), ["load", "page:1:-"]);
+
+    // Only a new history entry: no load, same page instance.
+    app.goto("/page#a");
+    assert_eq!(frame(&ctx, &mut app), ["page:2:a"]);
+    assert_eq!(history.urls(), ["/page", "/page#a"]);
+    app.goto_with("/page#b", GotoOptions::default().replace_state());
+    assert_eq!(frame(&ctx, &mut app), ["page:3:b"]);
+    assert_eq!(history.urls(), ["/page", "/page#b"]);
+
+    app.back();
+    assert_eq!(frame(&ctx, &mut app), ["page:4:-"]);
+    app.forward();
+    assert_eq!(frame(&ctx, &mut app), ["page:5:b"]);
+
+    // An entry the user created by editing the hash is adopted by the page…
+    history.edit("/page#c");
+    assert_eq!(frame(&ctx, &mut app), ["page:6:c"]);
+    app.back();
+    assert_eq!(frame(&ctx, &mut app), ["page:7:b"]);
+    app.forward();
+    assert_eq!(frame(&ctx, &mut app), ["page:8:c"]);
+
+    // …unlike one with another url.
+    history.edit("/");
+    assert_eq!(frame(&ctx, &mut app), ["home"]);
+
+    // Reloading keeps the fragment.
+    app.back();
+    frame(&ctx, &mut app);
+    app.goto_with("/page", GotoOptions::default().invalidate_all());
+    assert_eq!(frame(&ctx, &mut app), ["load", "page:1:-"]);
 }

@@ -37,8 +37,18 @@ pub struct Request {
     pub(crate) parent: Option<ParentHandle>,
 }
 
+/// Splits `url` into the part before the `#` and the fragment after it (`None` if empty).
+pub(crate) fn split_fragment(url: &str) -> (&str, Option<&str>) {
+    match url.split_once('#') {
+        Some((url, fragment)) => (url, Some(fragment).filter(|f| !f.is_empty())),
+        None => (url, None),
+    }
+}
+
 impl Request {
+    /// The request for `url`. A `#fragment` is dropped: it never affects matching or loads.
     pub(crate) fn new(url: &str) -> Self {
+        let (url, _) = split_fragment(url);
         let (path, query) = match url.split_once('?') {
             Some((path, query)) => (path, Some(query.to_owned())),
             None => (url, None),
@@ -144,5 +154,24 @@ impl fmt::Debug for Request {
             .field("params", &self.params)
             .field("route", &self.route)
             .finish_non_exhaustive()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fragments_are_dropped() {
+        assert_eq!(split_fragment("/a?b#c"), ("/a?b", Some("c")));
+        assert_eq!(split_fragment("/a#"), ("/a", None));
+        assert_eq!(split_fragment("/a"), ("/a", None));
+
+        let request = Request::new("/docs/#install");
+        assert_eq!(request.untracked_url(), "/docs");
+        let request = Request::new("/blog?tag=x#top");
+        assert_eq!(request.untracked_path(), "/blog");
+        assert_eq!(request.query(), Some("tag=x"));
+        assert_eq!(Request::new("/blog?#top").query(), None);
     }
 }
