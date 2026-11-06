@@ -1,5 +1,5 @@
 //! Navigation features: blocking, `after_navigate`, scroll restoration, matchers,
-//! optional parameters, layout resets and fragments.
+//! optional parameters, layout resets, fragments and titles.
 
 use core::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -9,6 +9,7 @@ use egui_kit::extract::{Nav, PageState, Path, Scroll, State};
 use egui_kit::page::{Children, Layout, Page};
 use egui_kit::{
     EntryKey, GotoOptions, History, HistoryEntry, MemoryHistory, Rejection, Router, RouterApp,
+    ViewTransition,
 };
 
 #[derive(Clone, Default)]
@@ -412,4 +413,70 @@ fn going_to_a_fragment_keeps_the_page() {
     frame(&ctx, &mut app);
     app.goto_with("/page", GotoOptions::default().invalidate_all());
     assert_eq!(frame(&ctx, &mut app), ["load", "page:1:-"]);
+}
+
+/// The root layout sets a default title and fades between pages; `/post` sets its own title.
+fn title_app() -> RouterApp<AppState> {
+    let titled = |title: &'static str| {
+        Page::new(
+            move |_: &mut Ui, nav: Nav<'_>, State(state): State<&AppState>| {
+                nav.set_title(title);
+                let outgoing = if nav.is_outgoing() { "-out" } else { "" };
+                state.push(format!("{title}{outgoing}"));
+            },
+        )
+    };
+    Router::new()
+        .layout(Layout::new(
+            |ui: &mut Ui, children: Children<'_>, nav: Nav<'_>| {
+                nav.set_title("App");
+                ViewTransition::fade().duration(1.0).show(ui, children);
+            },
+        ))
+        .page("/", Page::new(|_: &mut Ui| {}))
+        .page("/post", titled("Post"))
+        .with_state_and_history(AppState::default(), MemoryHistory::new("/post"))
+}
+
+/// Runs a frame at `time` and returns the titles sent to the window.
+fn titles(ctx: &egui::Context, app: &mut RouterApp<AppState>, time: f64) -> Vec<String> {
+    let input = egui::RawInput {
+        time: Some(time),
+        ..Default::default()
+    };
+    let mut output = ctx.run_ui(input, |ui| app.ui(ui));
+    output.textures_delta.clear();
+    output
+        .viewport_output
+        .remove(&egui::ViewportId::ROOT)
+        .map(|viewport| viewport.commands)
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|command| match command {
+            egui::ViewportCommand::Title(title) => Some(title),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn the_innermost_title_wins() {
+    let ctx = egui::Context::default();
+    let mut app = title_app();
+    assert_eq!(titles(&ctx, &mut app, 0.0), ["Post"]);
+    assert_eq!(app.title(), Some("Post"));
+    // Unchanged: not sent again.
+    assert_eq!(titles(&ctx, &mut app, 0.1), Vec::<String>::new());
+
+    // The outgoing page still renders during the transition, but has no say.
+    app.state().log.borrow_mut().clear();
+    app.goto("/");
+    assert_eq!(titles(&ctx, &mut app, 1.0), ["App"]);
+    assert_eq!(*app.state().log.borrow(), ["Post-out"]);
+    assert_eq!(titles(&ctx, &mut app, 1.5), Vec::<String>::new());
+    assert_eq!(titles(&ctx, &mut app, 2.5), Vec::<String>::new());
+    assert_eq!(app.title(), Some("App"));
+
+    app.back();
+    assert_eq!(titles(&ctx, &mut app, 3.0), ["Post"]);
 }

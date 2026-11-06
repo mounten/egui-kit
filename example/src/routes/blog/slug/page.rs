@@ -27,6 +27,7 @@ pub async fn load(Path(slug): Path<String>, State(db): State<Db>) -> Result<Data
 }
 
 pub fn view(ui: &mut egui::Ui, data: &Data, nav: Nav<'_>) {
+    nav.set_title(format!("{} · egui-kit example", data.post.title));
     ui.heading(&data.post.title);
     ui.horizontal(|ui| {
         ui.label("by");

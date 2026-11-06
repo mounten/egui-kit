@@ -66,7 +66,10 @@ impl<'a, S> ViewContext<'a, S> {
     }
 
     pub fn nav(&self) -> Nav<'_> {
-        Nav { frame: self.frame }
+        Nav {
+            frame: self.frame,
+            depth: self.layouts.len(),
+        }
     }
 
     pub(crate) fn frame(&self) -> &Frame<'a> {

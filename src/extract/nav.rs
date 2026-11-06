@@ -40,6 +40,8 @@ pub(crate) struct NavState {
     pub(crate) hovered_link: Option<String>,
     /// Set by [`Nav::block_navigation`] during the frame.
     pub(crate) blocking: bool,
+    /// Set by [`Nav::set_title`] during the frame, with the depth of the view that set it.
+    pub(crate) title: Option<(usize, String)>,
     pub(crate) blocked: Option<Navigation>,
 }
 
@@ -50,6 +52,8 @@ pub(crate) struct NavState {
 #[derive(Clone, Copy)]
 pub struct Nav<'f> {
     pub(crate) frame: &'f Frame<'f>,
+    /// How many layouts are around the view: views further in win [`Nav::set_title`].
+    pub(crate) depth: usize,
 }
 
 impl<S: 'static, D> FromView<S, D> for Nav<'_> {
@@ -254,6 +258,27 @@ impl Nav<'_> {
     /// Removes the state of the current entry, keeping its url.
     pub fn clear_history_state(&self) {
         self.push(NavAction::ReplaceState(String::new(), None));
+    }
+}
+
+/// The window.
+impl Nav<'_> {
+    /// Sets the title of the browser tab, or natively of the window. Call it every frame, like
+    /// [`Nav::block_navigation`]: the innermost view that does wins, so a page's title replaces
+    /// its layouts', and a root layout can set the default. When no view sets one, the title stays
+    /// as it was. See [`RouterApp::title`](crate::RouterApp::title).
+    pub fn set_title(&self, title: impl Into<String>) {
+        if self.frame.outgoing {
+            return;
+        }
+        let mut nav = self.frame.nav.borrow_mut();
+        if nav
+            .title
+            .as_ref()
+            .is_none_or(|(depth, _)| self.depth >= *depth)
+        {
+            nav.title = Some((self.depth, title.into()));
+        }
     }
 }
 

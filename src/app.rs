@@ -56,6 +56,8 @@ pub struct RouterApp<S> {
     blocked: Option<Blocked>,
     /// Lets the next navigation through a block (after the user confirmed it).
     unblock_next: bool,
+    /// The title last set with `Nav::set_title`, and applied to the window.
+    title: Option<String>,
     /// History moves made to undo a blocked back/forward, whose result we ignore.
     ignored_pops: usize,
 
@@ -85,6 +87,7 @@ impl<S: Clone + 'static> RouterApp<S> {
             blocking: false,
             blocked: None,
             unblock_next: false,
+            title: None,
             ignored_pops: 0,
             after_navigate: Vec::new(),
         };
@@ -137,6 +140,12 @@ impl<S: Clone + 'static> RouterApp<S> {
     /// The url of the current history entry, see [`Nav::url`](crate::extract::Nav::url).
     pub fn url(&self) -> Option<&str> {
         self.mounted.as_ref().map(|mounted| mounted.url.as_str())
+    }
+
+    /// The title the views set with [`Nav::set_title`](crate::extract::Nav::set_title), as
+    /// applied to the browser tab or window.
+    pub fn title(&self) -> Option<&str> {
+        self.title.as_deref()
     }
 
     pub fn is_loading(&self) -> bool {
@@ -227,6 +236,12 @@ impl<S: Clone + 'static> RouterApp<S> {
         }
         self.nav = nav.into_inner();
         self.blocking = core::mem::take(&mut self.nav.blocking);
+        if let Some((_, title)) = self.nav.title.take()
+            && self.title.as_ref() != Some(&title)
+        {
+            set_title(&ctx, &title);
+            self.title = Some(title);
+        }
         let hovered_link = self.nav.hovered_link.take();
         // Changing the link mid-click or mid-drag would disturb it.
         if !ctx.input(|i| i.pointer.any_down()) {
@@ -404,4 +419,17 @@ impl<S: Clone + 'static> RouterApp<S> {
             );
         }
     }
+}
+
+/// Shows `title` in the browser tab, or natively in the window's title bar.
+fn set_title(ctx: &egui::Context, title: &str) {
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = ctx;
+        if let Some(document) = web_sys::window().and_then(|window| window.document()) {
+            document.set_title(title);
+        }
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.to_owned()));
 }
