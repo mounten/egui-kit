@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0](https://github.com/mounten/egui-kit/compare/v0.4.0...v0.5.0) - 2026-11-06
+
+### Added
+
+- [**breaking**] block closing the window or tab while navigation is blocked ([#47](https://github.com/mounten/egui-kit/pull/47))
+- set the page title from views ([#46](https://github.com/mounten/egui-kit/pull/46))
+- add href() to build urls ([#45](https://github.com/mounten/egui-kit/pull/45))
+
+### Fixed
+
+- handle url fragments ([#44](https://github.com/mounten/egui-kit/pull/44))
+
 ## [0.4.0](https://github.com/mounten/egui-kit/compare/v0.3.1...v0.4.0) - 2026-10-13
 
 ### Added
