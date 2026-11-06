@@ -60,6 +60,11 @@ pub trait History {
     /// Called after every frame with the url of the [link](crate::extract::Nav::link) under the
     /// pointer, if any.
     fn hover_link(&mut self, _url: Option<&str>) {}
+
+    /// Called whenever the page starts or stops
+    /// [blocking navigation](crate::extract::Nav::block_navigation), e.g. to have the browser
+    /// confirm closing or reloading the tab.
+    fn set_blocking(&mut self, _blocking: bool) {}
 }
 
 /// A history chosen at runtime, e.g. a [`MemoryHistory`] in tests and the default one otherwise.
@@ -113,6 +118,10 @@ impl<H: History + ?Sized> History for Box<H> {
 
     fn hover_link(&mut self, url: Option<&str>) {
         (**self).hover_link(url);
+    }
+
+    fn set_blocking(&mut self, blocking: bool) {
+        (**self).set_blocking(blocking);
     }
 }
 

@@ -33,7 +33,7 @@ tokio = { version = "1.40", default-features = false, features = ["rt-multi-thre
 js-sys = "0.3"
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = { version = "0.4", optional = true }
-web-sys = { version = "0.3", features = ["Document", "Element", "EventTarget", "FocusOptions", "History", "HtmlElement", "Location", "MediaQueryList", "MouseEvent", "Node", "PopStateEvent", "Window"] }
+web-sys = { version = "0.3", features = ["BeforeUnloadEvent", "Document", "Element", "EventTarget", "FocusOptions", "History", "HtmlElement", "Location", "MediaQueryList", "MouseEvent", "Node", "PopStateEvent", "Window"] }
 
 [dev-dependencies]
 egui = "0.36"

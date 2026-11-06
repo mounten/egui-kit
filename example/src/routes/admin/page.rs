@@ -1,5 +1,5 @@
 //! `/admin`: write and publish posts. Leaving with an unsaved draft asks for confirmation
-//! (SvelteKit's `beforeNavigate` + `cancel()`), also for the back button.
+//! (SvelteKit's `beforeNavigate` + `cancel()`), also for the back button and closing the window.
 //!
 //! The draft is `PageState`: the user's input, separate from the loaded data, so it survives
 //! the page's reloads.
@@ -10,7 +10,7 @@
 
 use egui_kit::extract::{Nav, PageState, State};
 use egui_kit::remote::{self, Command, QueryState};
-use egui_kit::{Rejection, href};
+use egui_kit::{NavigationKind, Rejection, href};
 
 use crate::state::{AppState, POSTS, Session};
 
@@ -105,13 +105,25 @@ pub fn view(
         nav.block_navigation();
     }
     if let Some(blocked) = nav.blocked_navigation().filter(|_| !nav.is_outgoing()) {
-        let to = blocked.to.clone();
+        // Closing the window (natively; browsers show their own prompt for the tab).
+        let (heading, text, discard) = match blocked.kind {
+            NavigationKind::Leave => (
+                "Close the app?",
+                "Your draft will be lost.".to_owned(),
+                "Close",
+            ),
+            _ => (
+                "Discard your draft?",
+                format!("You are leaving for {}.", blocked.to),
+                "Discard",
+            ),
+        };
         let modal = egui::Modal::new(egui::Id::new("discard_draft")).show(ui.ctx(), |ui| {
-            ui.heading("Discard your draft?");
-            ui.label(format!("You are leaving for {to}."));
+            ui.heading(heading);
+            ui.label(text);
             ui.horizontal(|ui| {
                 (
-                    ui.button("Discard").clicked(),
+                    ui.button(discard).clicked(),
                     ui.button("Keep editing").clicked(),
                 )
             })

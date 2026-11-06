@@ -106,4 +106,17 @@ mod tests {
         let urls: Vec<_> = h.entries().iter().map(|e| e.url.as_str()).collect();
         assert_eq!(urls, ["/", "/a2", "/c"]);
     }
+
+    #[test]
+    fn blocking_changes_nothing() {
+        let ctx = egui::Context::default();
+        let mut h = MemoryHistory::new("/");
+        h.push("/a");
+        let before = h.clone();
+        h.set_blocking(true);
+        h.back();
+        assert_eq!(h.poll(&ctx).map(|e| e.url).as_deref(), Some("/"));
+        h.set_blocking(false);
+        assert_eq!(h.entries(), before.entries());
+    }
 }
