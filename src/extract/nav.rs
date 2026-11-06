@@ -289,7 +289,10 @@ impl Nav<'_> {
     /// you [confirm](Self::confirm_navigation) or [cancel](Self::cancel_navigation) them;
     /// see [`Nav::blocked_navigation`]. Shallow routing and invalidation are not affected.
     ///
-    /// Closing the browser tab or reloading it can't be blocked this way.
+    /// Closing the window is held back too. Natively, it is a blocked navigation like the others,
+    /// of kind [`NavigationKind::Leave`](crate::NavigationKind::Leave); once confirmed, the window
+    /// closes. In the browser, closing or reloading the tab shows the browser's own prompt
+    /// instead, and the page gets no blocked navigation.
     pub fn block_navigation(&self) {
         self.frame.nav.borrow_mut().blocking = true;
     }

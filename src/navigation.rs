@@ -12,6 +12,7 @@ pub struct Navigation {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum NavigationKind {
     /// The first page of the app.
     Enter,
@@ -23,6 +24,9 @@ pub enum NavigationKind {
     Popstate,
     /// [`Nav::invalidate`](crate::extract::Nav::invalidate): the same page was reloaded.
     Invalidate,
+    /// The window is being closed; `to` is empty. Only seen as a
+    /// [blocked navigation](crate::extract::Nav::blocked_navigation), natively.
+    Leave,
 }
 
 /// Where in the history the new page is, relative to the previous one.

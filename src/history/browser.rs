@@ -62,6 +62,10 @@ pub struct BrowserHistory {
     shared: Rc<RefCell<Shared>>,
     listener: Closure<dyn FnMut(web_sys::PopStateEvent)>,
     link_preview: Option<LinkPreview>,
+    /// Has the browser confirm closing or reloading the tab. Only listening while blocking: any
+    /// `beforeunload` listener keeps the page out of the back/forward cache.
+    before_unload: Closure<dyn FnMut(web_sys::BeforeUnloadEvent)>,
+    blocking: bool,
 }
 
 /// An `<a>` around the canvas whose `href` is the hovered link, so the browser shows it.
@@ -119,11 +123,19 @@ impl BrowserHistory {
             .add_event_listener_with_callback("popstate", listener.as_ref().unchecked_ref())
             .expect("failed to listen to popstate");
 
+        let before_unload = Closure::<dyn FnMut(_)>::new(|event: web_sys::BeforeUnloadEvent| {
+            event.prevent_default();
+            // Older browsers only prompt with a return value; all show their own message.
+            event.set_return_value("");
+        });
+
         Self {
             mode,
             shared,
             listener,
             link_preview: None,
+            before_unload,
+            blocking: false,
         }
     }
 
@@ -217,6 +229,7 @@ impl LinkPreview {
 
 impl Drop for BrowserHistory {
     fn drop(&mut self) {
+        self.set_blocking(false);
         let _ = window().remove_event_listener_with_callback(
             "popstate",
             self.listener.as_ref().unchecked_ref(),
@@ -282,6 +295,19 @@ impl History for BrowserHistory {
 
     fn shows_links(&self) -> bool {
         self.link_preview.is_some()
+    }
+
+    fn set_blocking(&mut self, blocking: bool) {
+        if blocking == self.blocking {
+            return;
+        }
+        self.blocking = blocking;
+        let listener = self.before_unload.as_ref().unchecked_ref();
+        let _ = if blocking {
+            window().add_event_listener_with_callback("beforeunload", listener)
+        } else {
+            window().remove_event_listener_with_callback("beforeunload", listener)
+        };
     }
 
     fn hover_link(&mut self, url: Option<&str>) {

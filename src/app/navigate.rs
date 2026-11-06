@@ -42,6 +42,9 @@ pub(super) struct Pending<S> {
 pub(super) enum Resume {
     Goto(String, GotoOptions),
     Traverse(Direction),
+    /// Closing the window (natively; browsers ask the user themselves).
+    #[cfg_attr(target_arch = "wasm32", expect(dead_code, reason = "native only"))]
+    Close,
 }
 
 pub(super) struct Blocked {
@@ -109,6 +112,7 @@ impl<S: Clone + 'static> RouterApp<S> {
         let kind = match resume {
             Resume::Goto(..) => NavigationKind::Goto,
             Resume::Traverse(_) => NavigationKind::Popstate,
+            Resume::Close => NavigationKind::Leave,
         };
         let navigation = Navigation {
             from: self.mounted.as_ref().map(|mounted| mounted.url.clone()),
@@ -128,6 +132,8 @@ impl<S: Clone + 'static> RouterApp<S> {
             Resume::Goto(url, options) => self.request_goto(&url, options),
             Resume::Traverse(Direction::Back) => self.history.back(),
             Resume::Traverse(_) => self.history.forward(),
+            // With `unblock_next` set, the next close request goes through.
+            Resume::Close => self.close_confirmed = true,
         }
     }
 

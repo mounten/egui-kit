@@ -58,6 +58,8 @@ pub struct RouterApp<S> {
     unblock_next: bool,
     /// The title last set with `Nav::set_title`, and applied to the window.
     title: Option<String>,
+    /// The user confirmed closing the window: close it after the frame.
+    close_confirmed: bool,
     /// History moves made to undo a blocked back/forward, whose result we ignore.
     ignored_pops: usize,
 
@@ -88,6 +90,7 @@ impl<S: Clone + 'static> RouterApp<S> {
             blocked: None,
             unblock_next: false,
             title: None,
+            close_confirmed: false,
             ignored_pops: 0,
             after_navigate: Vec::new(),
         };
@@ -213,6 +216,8 @@ impl<S: Clone + 'static> RouterApp<S> {
 
         #[cfg(not(target_arch = "wasm32"))]
         self.handle_back_forward_input(ui);
+        #[cfg(not(target_arch = "wasm32"))]
+        self.handle_close_request(&ctx);
         if let Some(entry) = self.history.poll(&ctx) {
             self.traverse(entry);
         }
@@ -235,7 +240,11 @@ impl<S: Clone + 'static> RouterApp<S> {
             }
         }
         self.nav = nav.into_inner();
+        let was_blocking = self.blocking;
         self.blocking = core::mem::take(&mut self.nav.blocking);
+        if self.blocking != was_blocking {
+            self.history.set_blocking(self.blocking);
+        }
         if let Some((_, title)) = self.nav.title.take()
             && self.title.as_ref() != Some(&title)
         {
@@ -263,6 +272,9 @@ impl<S: Clone + 'static> RouterApp<S> {
             }
             ctx.request_repaint();
         }
+        if core::mem::take(&mut self.close_confirmed) {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
         self.poll(&ctx);
     }
 
@@ -283,6 +295,16 @@ impl<S: Clone + 'static> RouterApp<S> {
         }
         if forward {
             self.history.forward();
+        }
+    }
+
+    /// Holds back closing the window while the page blocks navigation, as a navigation of kind
+    /// [`Leave`](crate::NavigationKind::Leave). Browsers ask the user themselves.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn handle_close_request(&mut self, ctx: &egui::Context) {
+        if ctx.input(|i| i.viewport().close_requested()) && self.should_block() {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            self.block(Resume::Close, String::new(), Direction::None);
         }
     }
 

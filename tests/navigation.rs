@@ -1,5 +1,5 @@
 //! Navigation features: blocking, `after_navigate`, scroll restoration, matchers,
-//! optional parameters, layout resets, fragments and titles.
+//! optional parameters, layout resets, fragments, titles and closing the window.
 
 use core::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -479,4 +479,70 @@ fn the_innermost_title_wins() {
 
     app.back();
     assert_eq!(titles(&ctx, &mut app, 3.0), ["Post"]);
+}
+
+/// Runs a frame, asking to close the window if `close`, and returns the viewport commands.
+fn close_frame(
+    ctx: &egui::Context,
+    app: &mut RouterApp<AppState>,
+    close: bool,
+) -> Vec<egui::ViewportCommand> {
+    let mut input = egui::RawInput::default();
+    if close {
+        input.viewports.insert(
+            egui::ViewportId::ROOT,
+            egui::ViewportInfo {
+                events: vec![egui::ViewportEvent::Close],
+                ..Default::default()
+            },
+        );
+    }
+    let mut output = ctx.run_ui(input, |ui| app.ui(ui));
+    output.textures_delta.clear();
+    app.state().log.borrow_mut().clear();
+    output
+        .viewport_output
+        .remove(&egui::ViewportId::ROOT)
+        .map(|viewport| viewport.commands)
+        .unwrap_or_default()
+}
+
+#[test]
+fn closing_the_window_waits_for_confirmation() {
+    use egui::ViewportCommand::{CancelClose, Close};
+
+    let ctx = egui::Context::default();
+    let mut app = app("/editor");
+    frame(&ctx, &mut app);
+    app.state().dirty.set(true);
+    frame(&ctx, &mut app);
+
+    assert!(close_frame(&ctx, &mut app, true).contains(&CancelClose));
+    assert_eq!(
+        frame(&ctx, &mut app),
+        ["root", "editor (blocked: Leave to )"]
+    );
+    act(&ctx, &mut app, |nav| nav.cancel_navigation());
+
+    // Closing again, confirmed this time: the window is closed, and that close goes through.
+    close_frame(&ctx, &mut app, true);
+    app.state()
+        .commands
+        .borrow_mut()
+        .push(Box::new(|nav: Nav<'_>| nav.confirm_navigation()));
+    assert!(close_frame(&ctx, &mut app, false).contains(&Close));
+    assert!(!close_frame(&ctx, &mut app, true).contains(&CancelClose));
+}
+
+#[test]
+fn closing_the_window_without_blocking() {
+    let ctx = egui::Context::default();
+    let mut app = app("/editor");
+    frame(&ctx, &mut app);
+    let commands = close_frame(&ctx, &mut app, true);
+    assert!(
+        !commands.contains(&egui::ViewportCommand::CancelClose),
+        "{commands:?}"
+    );
+    assert_eq!(frame(&ctx, &mut app), ["root", "editor"]);
 }
