@@ -75,10 +75,20 @@ impl<'f> Nav<'f> {
         self.frame.url
     }
 
+    /// The `#fragment` of [`Nav::url`], without the `#`, e.g. `install` for `/docs#install`.
+    ///
+    /// The fragment never affects which page is shown or its loads: going to another fragment of
+    /// the current url only adds a history entry, like [shallow routing](Nav::push_state). The
+    /// page decides what it means, e.g. which section to scroll to.
+    pub fn fragment(&self) -> Option<&'f str> {
+        crate::request::split_fragment(self.frame.url).1
+    }
+
     /// Whether `href` is the current path, or (for anything but `/`) a parent of it. The path
-    /// is [`Nav::url`]'s, so it follows shallow routing.
+    /// is [`Nav::url`]'s, so it follows shallow routing. Queries and fragments are ignored.
     pub fn is_active(&self, href: &str) -> bool {
-        let path = |url: &str| crate::router::normalize(url.split('?').next().unwrap_or_default());
+        let path =
+            |url: &str| crate::router::normalize(url.split(['?', '#']).next().unwrap_or_default());
         let (href, path) = (path(href), path(self.frame.url));
         path == href
             || (href != "/" && path.starts_with(&href) && path[href.len()..].starts_with('/'))

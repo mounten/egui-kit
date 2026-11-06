@@ -18,7 +18,7 @@ pub struct EntryKey(pub u64);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HistoryEntry {
-    /// An app-relative url: a path plus optional query, e.g. `/blog?page=2`.
+    /// An app-relative url: a path plus optional query and fragment, e.g. `/blog?page=2#top`.
     pub url: String,
     pub key: EntryKey,
 }
