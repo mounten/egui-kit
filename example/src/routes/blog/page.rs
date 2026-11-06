@@ -3,8 +3,8 @@
 
 use core::time::Duration;
 
-use egui_kit::Rejection;
 use egui_kit::extract::{Nav, Parent, Query, Scroll, Snapshot};
+use egui_kit::{Rejection, href};
 use serde::{Deserialize, Serialize};
 
 use super::layout;
@@ -77,7 +77,7 @@ pub fn view(
                 q: Some(text.trim().to_owned()).filter(|q| !q.is_empty()),
                 tag: data.tag.clone(),
             };
-            nav.goto(url(&query));
+            nav.goto(href("/blog").query(&query));
         }
         if data.tag.is_some() && ui.button("Clear tag").clicked() {
             nav.goto("/blog");
@@ -93,7 +93,7 @@ pub fn view(
             nav.link(
                 ui,
                 egui::RichText::new(&post.title).heading(),
-                &format!("/blog/{}", post.slug),
+                &href("/blog/{slug}").param("slug", &post.slug).to_string(),
             );
             ui.label(&post.body);
             ui.weak(
@@ -106,11 +106,4 @@ pub fn view(
             ui.add_space(12.0);
         }
     });
-}
-
-fn url(query: &BlogQuery) -> String {
-    match serde_urlencoded::to_string(query) {
-        Ok(qs) if !qs.is_empty() => format!("/blog?{qs}"),
-        _ => "/blog".to_owned(),
-    }
 }

@@ -95,6 +95,23 @@
 //! [`Router::merge`] adds a router's pages at the same level, keeping its layout, hooks and error
 //! page to its own pages. Building the app panics on conflicting routes and unknown matchers.
 //!
+//! ## Building urls
+//!
+//! [`href`] fills in a route pattern. It percent-encodes the parameters, so that a slug with a
+//! space, `?`, `#` or `/` still leads to its page, and adds a query and fragment:
+//!
+//! ```
+//! use egui_kit::extract::Nav;
+//! use egui_kit::href;
+//!
+//! fn post_link(ui: &mut egui::Ui, nav: Nav, title: &str, slug: &str) {
+//!     nav.link(ui, title, &href("/blog/{slug}").param("slug", slug).to_string());
+//!     if ui.button("Print").clicked() {
+//!         nav.goto(href("/blog/{slug}/print").param("slug", slug));
+//!     }
+//! }
+//! ```
+//!
 //! # Pages and layouts
 //!
 //! A [`Page`](page::Page) is a view, created with [`Page::new`](page::Page::new), or a load and a
@@ -369,6 +386,7 @@ mod error;
 mod exec;
 pub mod extract;
 mod history;
+mod href;
 mod load;
 mod navigation;
 pub mod page;
@@ -385,6 +403,7 @@ pub use error::{Redirect, Rejection, RouteError, error, redirect};
 #[cfg(target_arch = "wasm32")]
 pub use history::{BrowserHistory, HistoryMode};
 pub use history::{EntryKey, History, HistoryEntry, MemoryHistory, default_history};
+pub use href::{Href, href};
 pub use navigation::{Direction, GotoOptions, Navigation, NavigationKind};
 pub use request::Request;
 pub use router::Router;

@@ -2,6 +2,7 @@
 //! to the root layout, like SvelteKit's `+page@.svelte`.
 
 use egui_kit::extract::Nav;
+use egui_kit::href;
 
 use super::page::Data;
 
@@ -13,6 +14,7 @@ pub fn view(ui: &mut egui::Ui, data: &Data, nav: Nav<'_>) {
         ui.add_space(12.0);
         ui.label(&data.post.body);
         ui.add_space(12.0);
-        nav.link(ui, "Back to the post", &format!("/blog/{}", data.post.slug));
+        let post = href("/blog/{slug}").param("slug", &data.post.slug);
+        nav.link(ui, "Back to the post", &post.to_string());
     });
 }

@@ -5,6 +5,7 @@ pub mod id;
 pub mod name;
 
 use egui_kit::extract::Nav;
+use egui_kit::href;
 
 use crate::state::{Author, Db, Post};
 
@@ -28,6 +29,7 @@ fn view(ui: &mut egui::Ui, data: &Data, nav: Nav<'_>) {
     ui.heading(data.author.name);
     ui.label(format!("{} posts", data.posts.len()));
     for post in &data.posts {
-        nav.link(ui, &post.title, &format!("/blog/{}", post.slug));
+        let url = href("/blog/{slug}").param("slug", &post.slug);
+        nav.link(ui, &post.title, &url.to_string());
     }
 }

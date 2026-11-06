@@ -2,9 +2,9 @@
 //! the layout's `PageState`: it stays while moving between the blog's pages.
 
 use egui::Panel;
-use egui_kit::Rejection;
 use egui_kit::extract::{Nav, PageState, PersistentState, State};
 use egui_kit::page::Children;
+use egui_kit::{Rejection, href};
 
 use crate::state::{Db, Post, TransitionStyle};
 
@@ -47,7 +47,8 @@ pub fn view(
         .show(ui, |ui| {
             ui.strong("Posts");
             for post in &data.posts {
-                nav.nav_link(ui, &post.title, &format!("/blog/{}", post.slug));
+                let url = href("/blog/{slug}").param("slug", &post.slug);
+                nav.nav_link(ui, &post.title, &url.to_string());
             }
             ui.separator();
             ui.horizontal(|ui| {
@@ -57,7 +58,8 @@ pub fn view(
             if !sidebar.hide_tags {
                 ui.horizontal_wrapped(|ui| {
                     for tag in &data.tags {
-                        nav.link(ui, format!("#{tag}"), &format!("/blog?tag={tag}"));
+                        let url = href("/blog").query(&[("tag", tag)]);
+                        nav.link(ui, format!("#{tag}"), &url.to_string());
                     }
                 });
             }
